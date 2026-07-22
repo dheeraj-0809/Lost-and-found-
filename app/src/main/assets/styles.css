@@ -1487,6 +1487,36 @@ ul, ol { list-style: none; }
   background: rgba(79,142,247,0.07); border: 1px solid rgba(79,142,247,0.2);
   border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4); margin-bottom: var(--sp-3);
 }
+
+.notif-photo-card {
+  background: rgba(46,213,115,0.06); border: 1px solid rgba(46,213,115,0.2);
+  border-radius: var(--r-md); padding: var(--sp-3); margin-bottom: var(--sp-3);
+}
+.notif-photo-label {
+  font-size: 11px; font-weight: 800; color: var(--green-light);
+  margin-bottom: var(--sp-2); letter-spacing: 0.3px;
+  display: flex; align-items: center; gap: 6px;
+}
+.notif-photo-wrapper {
+  position: relative; width: 100%; max-height: 220px;
+  border-radius: var(--r-sm); overflow: hidden;
+  background: rgba(0,0,0,0.35); display: flex;
+  align-items: center; justify-content: center;
+  border: 1px solid var(--border-bright);
+}
+.notif-found-img {
+  width: 100%; max-height: 220px; object-fit: cover;
+  border-radius: var(--r-sm); transition: transform 0.3s ease;
+}
+.notif-found-img:hover { transform: scale(1.02); }
+.notif-photo-fallback {
+  padding: var(--sp-4); font-size: 12px; color: var(--text-3); text-align: center;
+}
+.notif-no-photo-note {
+  font-size: 11px; color: var(--text-4); background: var(--surface);
+  border: 1px dashed var(--border); border-radius: var(--r-sm);
+  padding: 8px 12px; margin-bottom: var(--sp-3);
+}
 .notif-contact-label { font-size: 11px; font-weight: 800; color: var(--blue-light); margin-bottom: var(--sp-2); letter-spacing: 0.3px; }
 .notif-contact-detail { display: flex; flex-direction: column; gap: 6px; }
 .notif-contact-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }

@@ -918,6 +918,23 @@ function renderNotifications() {
     </div>
   </div>
 
+  <!-- Found Item Photo (Uploaded by Finder) -->
+  ${m.found.photoUri && m.found.photoUri !== '' ? `
+  <div class="notif-photo-card">
+    <div class="notif-photo-label">🖼️ Found Item Photo (Uploaded by ${esc(m.found.ownerName||'Finder')})</div>
+    <div class="notif-photo-wrapper">
+      <img src="${esc(m.found.photoUri === 'demo-uri' ? 'https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&w=600&q=80' : m.found.photoUri)}"
+           alt="Found Item Photo"
+           class="notif-found-img"
+           onerror="this.onerror=null; this.src='https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&w=600&q=80';" />
+    </div>
+  </div>
+  ` : `
+  <div class="notif-no-photo-note">
+    📷 No photo was attached by finder for this report
+  </div>
+  `}
+
   <!-- Contact card of the OTHER person -->
   <div class="notif-contact-block">
     <div class="notif-contact-label">📞 Contact — ${esc(other.ownerName||'Student')}</div>
