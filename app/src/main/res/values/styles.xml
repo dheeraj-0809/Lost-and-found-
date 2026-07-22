@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ========================================================
+         LostLink AI — Theme System
+         Dark navy (#060D1A) + Gold (#F5B731) brand palette
+         ======================================================== -->
+
+    <!-- Base app theme -->
+    <style name="Theme.LostLink" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <!-- Dark status bar matching app background -->
+        <item name="android:statusBarColor">#060D1A</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <!-- White navigation bar -->
+        <item name="android:navigationBarColor">#060D1A</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <!-- Background colour (shown briefly during WebView load) -->
+        <item name="android:windowBackground">@color/bg_dark</item>
+    </style>
+
+    <!-- Splash theme — applied to MainActivity while WebView initialises -->
+    <style name="Theme.LostLink.Splash" parent="Theme.LostLink">
+        <item name="android:windowBackground">@drawable/splash_screen</item>
+        <!-- Keep status/nav bars dark -->
+        <item name="android:statusBarColor">#060D1A</item>
+        <item name="android:navigationBarColor">#060D1A</item>
+    </style>
+
+</resources>

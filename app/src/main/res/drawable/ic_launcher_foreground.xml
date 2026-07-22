@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LostLink AI — App Icon Foreground (Android VectorDrawable)
+  Uses only <path> elements (no <circle>, no SVG-only tags).
+  Safe zone: 66dp centred in 108dp viewport.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- ── Soft outer glow (large rounded path behind pin) ── -->
+    <path
+        android:fillColor="#22F5B731"
+        android:pathData="M54,16
+            C37.431,16 24,29.431 24,46
+            C24,59.2 33.0,70.5 46.0,77.2
+            L54,92
+            L62.0,77.2
+            C75.0,70.5 84,59.2 84,46
+            C84,29.431 70.569,16 54,16 Z" />
+
+    <!-- ── Main gold pin body ── -->
+    <path
+        android:fillColor="#F5B731"
+        android:pathData="M54,21
+            C40.193,21 29,32.193 29,46
+            C29,57.6 36.8,67.4 47.5,73.3
+            L54,85
+            L60.5,73.3
+            C71.2,67.4 79,57.6 79,46
+            C79,32.193 67.807,21 54,21 Z" />
+
+    <!-- ── Inner dark circle (path approximation: two arcs) ── -->
+    <path
+        android:fillColor="#060D1A"
+        android:pathData="M54,28
+            A18,18 0 1 1 53.999,28 Z" />
+
+    <!-- ── "L" letter #1 ── -->
+    <path
+        android:fillColor="#F5B731"
+        android:pathData="M41,37 L41,55 L50,55 L50,52 L44.5,52 L44.5,37 Z" />
+
+    <!-- ── "L" letter #2 ── -->
+    <path
+        android:fillColor="#F5B731"
+        android:pathData="M52,37 L52,55 L61,55 L61,52 L55.5,52 L55.5,37 Z" />
+
+    <!-- ── Sparkle dot top-right (small diamond) ── -->
+    <path
+        android:fillColor="#FFD166"
+        android:alpha="0.75"
+        android:pathData="M68,25.5 L70,28 L68,30.5 L66,28 Z" />
+
+    <!-- ── Sparkle dot far right (smaller diamond) ── -->
+    <path
+        android:fillColor="#FFD166"
+        android:alpha="0.50"
+        android:pathData="M75.5,35 L77,36.8 L75.5,38.6 L74,36.8 Z" />
+
+    <!-- ── Sparkle dot top-left (diamond) ── -->
+    <path
+        android:fillColor="#FFD166"
+        android:alpha="0.60"
+        android:pathData="M36,24 L38,26.5 L36,29 L34,26.5 Z" />
+
+</vector>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ========================================================
+         LostLink AI — Color Palette
+         ======================================================== -->
+
+    <!-- Core backgrounds -->
+    <color name="bg_dark">#060D1A</color>
+    <color name="bg_dark_2">#0A1628</color>
+    <color name="bg_dark_3">#0F1E3A</color>
+
+    <!-- Brand colors -->
+    <color name="gold">#F5B731</color>
+    <color name="blue">#4F8EF7</color>
+    <color name="red">#FF4757</color>
+    <color name="green">#2ED573</color>
+
+    <!-- Legacy (kept for compatibility) -->
+    <color name="rvu_blue">#123B70</color>
+    <color name="white">#FFFFFF</color>
+</resources>
