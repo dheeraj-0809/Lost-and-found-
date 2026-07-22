@@ -3,8 +3,11 @@ package edu.rvu.lostlink;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Base64;
 import android.view.View;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -12,6 +15,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.ProgressBar;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
@@ -224,14 +230,44 @@ public final class MainActivity extends Activity {
 
     private void onPhotoSelected(Uri uri) {
         if (uri == null) return;
-        // Request persistent read permission so the URI survives process restarts
         try {
             getContentResolver().takePersistableUriPermission(
                     uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (SecurityException ignored) {
-            // Some providers grant session-only access — that's fine for our use case
+            // Session-only access
         }
-        evaluateJs("window.onNativePhotoSelected(" + JSONObject.quote(uri.toString()) + ")");
+
+        new Thread(() -> {
+            try {
+                InputStream inputStream = getContentResolver().openInputStream(uri);
+                Bitmap bitmap = BitmapFactory.decodeStream(inputStream);
+                if (inputStream != null) inputStream.close();
+
+                if (bitmap != null) {
+                    int maxDim = 800;
+                    int width = bitmap.getWidth();
+                    int height = bitmap.getHeight();
+                    if (width > maxDim || height > maxDim) {
+                        float ratio = Math.min((float) maxDim / width, (float) maxDim / height);
+                        width = Math.round(width * ratio);
+                        height = Math.round(height * ratio);
+                        bitmap = Bitmap.createScaledBitmap(bitmap, width, height, true);
+                    }
+
+                    ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream);
+                    byte[] bytes = outputStream.toByteArray();
+                    String base64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
+                    String dataUrl = "data:image/jpeg;base64," + base64;
+
+                    evaluateJs("window.onNativePhotoSelected(" + JSONObject.quote(dataUrl) + ")");
+                } else {
+                    evaluateJs("window.onNativePhotoSelected(" + JSONObject.quote(uri.toString()) + ")");
+                }
+            } catch (Exception e) {
+                evaluateJs("window.onNativePhotoSelected(" + JSONObject.quote(uri.toString()) + ")");
+            }
+        }).start();
     }
 
     /**

@@ -919,14 +919,17 @@ function renderNotifications() {
   </div>
 
   <!-- Found Item Photo (Uploaded by Finder) -->
-  ${m.found.photoUri && m.found.photoUri !== '' ? `
+  ${m.found.photoUri && m.found.photoUri !== '' && m.found.photoUri !== 'demo-uri' ? `
   <div class="notif-photo-card">
     <div class="notif-photo-label">🖼️ Found Item Photo (Uploaded by ${esc(m.found.ownerName||'Finder')})</div>
     <div class="notif-photo-wrapper">
-      <img src="${esc(m.found.photoUri === 'demo-uri' ? 'https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&w=600&q=80' : m.found.photoUri)}"
+      <img src="${esc(m.found.photoUri)}"
            alt="Found Item Photo"
            class="notif-found-img"
-           onerror="this.onerror=null; this.src='https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&w=600&q=80';" />
+           onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+      <div class="notif-photo-fallback" style="display:none;">
+        📷 Photo attached by finder (${esc(m.found.title)})
+      </div>
     </div>
   </div>
   ` : `
