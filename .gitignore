@@ -1,3 +1,7 @@
+# Python cache
+__pycache__/
+*.pyc
+
 # Gradle & Build output
 .gradle/
 build/

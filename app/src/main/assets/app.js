@@ -112,13 +112,45 @@ const state = {
 // ============================================================
 const hasNative = typeof window.LostLinkNative !== 'undefined';
 const native = hasNative ? window.LostLinkNative : {
-  choosePhoto:    () => window.onNativePhotoSelected && window.onNativePhotoSelected('demo-uri'),
+  choosePhoto: () => {
+    let fileInput = document.getElementById('_webPhotoInput');
+    if (!fileInput) {
+      fileInput = document.createElement('input');
+      fileInput.id = '_webPhotoInput';
+      fileInput.type = 'file';
+      fileInput.accept = 'image/*';
+      fileInput.style.display = 'none';
+      document.body.appendChild(fileInput);
+      fileInput.addEventListener('change', () => {
+        if (fileInput.files && fileInput.files[0]) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            window.onNativePhotoSelected && window.onNativePhotoSelected(e.target.result);
+          };
+          reader.readAsDataURL(fileInput.files[0]);
+        }
+      });
+    }
+    fileInput.click();
+  },
   signInWithGoogle: () => {
-    const typed = ($('#authEmail') ? $('#authEmail').value : '').trim().toLowerCase();
+    const promptEmail = prompt('Sign in with RVU Google Account:\nEnter your @rvu.edu.in email:', 'student@rvu.edu.in');
+    if (!promptEmail) {
+      setAuthLoading(false);
+      return;
+    }
+    const cleanEmail = promptEmail.trim().toLowerCase();
+    if (!RVU_EMAIL_RE.test(cleanEmail)) {
+      setAuthLoading(false);
+      toast('Please enter a valid @rvu.edu.in email address', 'error');
+      return;
+    }
+    const defaultName = cleanEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
       ok: true,
-      name: ($('#authName') ? $('#authName').value : '') || 'Demo Student',
-      email: typed || 'demo@rvu.edu.in',
+      name: defaultName,
+      email: cleanEmail,
+      photoUrl: ''
     });
   }
 };
@@ -159,6 +191,7 @@ function timeAgo(ts) {
 function safeArr(str) { try { const v=JSON.parse(str); return Array.isArray(v)?v:[]; } catch { return []; } }
 function safeObj(str,fb={}) { try { return JSON.parse(str)||fb; } catch { return fb; } }
 function norm(v='') { return String(v).trim().toLowerCase().replace(/[^a-z0-9 ]/g,''); }
+function emailToDbKey(email) { return String(email || '').toLowerCase().trim().replace(/\./g, '_dot_'); }
 
 function matchId(m) {
   return `${m.lost.id || m.lost.createdAt}-${m.found.id || m.found.createdAt}`;
@@ -563,7 +596,60 @@ function populateProfile() {
 }
 
 
-function handleProfileForm(e) {
+// ============================================================
+// 10. AUTH STATE & GOOGLE SIGN-IN
+// ============================================================
+function setAuthLoading(loading, message = 'Connecting to Google...') {
+  const btn = $('#googleSignInBtn');
+  const txt = $('#googleBtnText');
+  const statusEl = $('#authStatusIndicator');
+  const statusTxt = $('#authStatusText');
+
+  if (loading) {
+    if (btn) btn.disabled = true;
+    if (txt) txt.textContent = message;
+    if (statusEl) {
+      statusEl.classList.remove('hidden');
+      if (statusTxt) statusTxt.textContent = message;
+    }
+  } else {
+    if (btn) btn.disabled = false;
+    if (txt) txt.textContent = 'Continue with Google (RVU)';
+    if (statusEl) statusEl.classList.add('hidden');
+  }
+}
+
+function showNewUserRegistration(account) {
+  $('#authPrimaryView')?.classList.add('hidden');
+  $('#authRegisterView')?.classList.remove('hidden');
+
+  $('#authEmail').value = account.email;
+  $('#authName').value  = account.name || '';
+  $('#regVerifiedEmail').textContent = account.email;
+
+  const avatarEl = $('#regAvatar');
+  if (avatarEl) {
+    if (account.photoUrl) {
+      avatarEl.style.backgroundImage = `url("${account.photoUrl}")`;
+      avatarEl.textContent = '';
+    } else {
+      avatarEl.style.backgroundImage = '';
+      avatarEl.textContent = (account.name || account.email).slice(0, 2).toUpperCase();
+    }
+  }
+
+  state.tempGooglePhoto = account.photoUrl || '';
+  setTimeout(() => $('#authPhone')?.focus(), 250);
+}
+
+function resetAuthView() {
+  $('#authPrimaryView')?.classList.remove('hidden');
+  $('#authRegisterView')?.classList.add('hidden');
+  setAuthLoading(false);
+  $('#authForm')?.reset();
+}
+
+async function handleProfileForm(e) {
   e.preventDefault();
   const user = {
     name:     $('#authName').value.trim(),
@@ -571,18 +657,34 @@ function handleProfileForm(e) {
     phone:    $('#authPhone').value.trim(),
     branch:   $('#authBranch').value.trim(),
     semester: $('#authSemester').value,
+    photoUrl: state.tempGooglePhoto || '',
+    createdAt: Date.now()
   };
 
   if (!user.name)     { toast('Please enter your full name','error'); return; }
   if (!RVU_EMAIL_RE.test(user.email)) { toast('Only @rvu.edu.in emails accepted','error'); return; }
   if (!PHONE_RE.test(user.phone))    { toast('Enter a valid 10-digit mobile number','error'); return; }
-  if (!user.branch)   { toast('Please enter your branch','error'); return; }
+  if (!user.branch)   { toast('Please select your branch','error'); return; }
   if (!user.semester) { toast('Please select your semester','error'); return; }
 
+  const submitBtn = $('#authSubmitBtn');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving Profile...'; }
+
+  // Save to Firebase Realtime Database cloud storage (/users/{email})
+  const safeKey = emailToDbKey(user.email);
+  try {
+    await fbPut(`users/${safeKey}`, user);
+  } catch (err) {
+    console.warn('Could not sync user to cloud database, saved locally:', err);
+  } finally {
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Finish Setup & Enter →'; }
+  }
+
   saveUser(user);
+  resetAuthView();
   renderAuthState();
   startSync();
-  toast(`Hello, ${user.name.split(' ')[0]}! 👋`, 'success');
+  toast(`Welcome to LostLink, ${user.name.split(' ')[0]}! 🎉`, 'success');
 }
 
 function showLogoutModal() {
@@ -608,61 +710,73 @@ function logout() {
   state.user    = null;
   state.reports = [];
   state.matches = [];
+  resetAuthView();
   renderAuthState();
-  // Reset Google button
-  $('#googleSignInBtn').className = 'btn-google';
-  $('#googleBtnText').textContent = 'Continue with Google RVU';
-  $('#authEmail').readOnly  = false;
-  $('#authName').readOnly   = false;
-  $('#authForm').reset();
   toast('Signed out successfully');
 }
 
+window.onNativeGoogleSignIn = async (result) => {
+  setAuthLoading(false);
 
-// ============================================================
-// 10. GOOGLE SIGN-IN CALLBACKS
-// ============================================================
-function resetGoogleBtnNotVerified() {
-  const btn = $('#googleSignInBtn');
-  if (btn) btn.classList.remove('verified');
-  const txt = $('#googleBtnText');
-  if (txt) txt.textContent = 'Continue with Google RVU';
-  const input = $('#authEmail');
-  if (input) input.readOnly = false;
-}
-
-window.onNativeGoogleSignIn = (result) => {
-  const typedEmail = (state.tempTypedEmail || ($('#authEmail') ? $('#authEmail').value : '') || '').trim().toLowerCase();
-
-  if (!typedEmail || !RVU_EMAIL_RE.test(typedEmail)) {
-    state.tempTypedEmail = null;
-    resetGoogleBtnNotVerified();
-    toast('Please enter a valid @rvu.edu.in email in the input box first', 'error');
+  if (!result || !result.ok || !result.email) {
+    const errorMsg = result?.message || 'Google sign-in cancelled or failed';
+    toast(errorMsg, 'error');
+    resetAuthView();
     return;
   }
 
-  // If Google Sign-In returned an account email, check if it matches typed email
-  if (result && result.ok && result.email) {
-    const googleEmail = String(result.email).trim().toLowerCase();
+  const email = String(result.email).trim().toLowerCase();
+  const name = String(result.name || '').trim();
+  const photoUrl = String(result.photoUrl || '').trim();
 
-    if (googleEmail !== typedEmail) {
-      state.tempTypedEmail = null;
-      resetGoogleBtnNotVerified();
-      toast('Email not matched: Selected Google account does not match typed email', 'error');
-      return;
+  // Strict campus domain verification
+  if (!RVU_EMAIL_RE.test(email)) {
+    toast('Access restricted: Please select your official @rvu.edu.in Google account', 'error');
+    resetAuthView();
+    return;
+  }
+
+  // Check if user already exists in Firebase cloud database
+  setAuthLoading(true, 'Checking campus records...');
+
+  try {
+    const safeKey = emailToDbKey(email);
+    const existingUser = await fbGet(`users/${safeKey}`);
+
+    if (existingUser && existingUser.email) {
+      // 🟢 OLD USER: Instant 1-tap entry without filling any forms!
+      setAuthLoading(false);
+      const updatedProfile = {
+        ...existingUser,
+        name: name || existingUser.name,
+        photoUrl: photoUrl || existingUser.photoUrl || ''
+      };
+      saveUser(updatedProfile);
+      resetAuthView();
+      renderAuthState();
+      startSync();
+      toast(`Welcome back, ${updatedProfile.name.split(' ')[0]}! 👋`, 'success');
+    } else {
+      // 🔵 NEW USER: First-time sign up, show brief profile setup
+      setAuthLoading(false);
+      showNewUserRegistration({ email, name, photoUrl });
+      toast('Account verified! Complete your profile to finish setup.', 'info');
+    }
+  } catch (err) {
+    console.error('User lookup error:', err);
+    setAuthLoading(false);
+    // Offline / fallback: check local storage
+    const local = loadUser();
+    if (local && local.email === email) {
+      saveUser(local);
+      resetAuthView();
+      renderAuthState();
+      startSync();
+      toast(`Welcome back, ${local.name.split(' ')[0]}! 👋`, 'success');
+    } else {
+      showNewUserRegistration({ email, name, photoUrl });
     }
   }
-
-  // Email matched / verified
-  state.tempTypedEmail = null;
-  $('#authEmail').value    = typedEmail;
-  $('#authEmail').readOnly = true;
-  if (result && result.name && $('#authName') && !$('#authName').value.trim()) {
-    $('#authName').value   = result.name;
-  }
-  $('#googleSignInBtn').classList.add('verified');
-  $('#googleBtnText').textContent = 'Email verified ✔';
-  toast('Email verified successfully!', 'success');
 };
 
 window.onNativePhotoSelected = (uri) => {
@@ -940,7 +1054,7 @@ function renderNotifications() {
 
   <!-- Contact card of the OTHER person -->
   <div class="notif-contact-block">
-    <div class="notif-contact-label">📞 Contact — ${esc(other.ownerName||'Student')}</div>
+    <div class="notif-contact-label">📞 Contact &amp; Actions — ${esc(other.ownerName||'Student')}</div>
     <div class="notif-contact-detail">
       <div class="notif-contact-row">
         <span class="notif-contact-icon">📱</span>
@@ -954,6 +1068,26 @@ function renderNotifications() {
         <span class="notif-contact-icon">🎓</span>
         <span>${esc(other.ownerBranch||'RVU')} · Sem ${esc(other.ownerSemester||'?')}</span>
       </div>
+    </div>
+
+    <!-- Quick Action Buttons -->
+    <div class="notif-actions-row">
+      ${(() => {
+        const cleanPhone = String(other.ownerPhone || '').replace(/\D/g, '');
+        const waPhone = cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone;
+        const waMsg = encodeURIComponent(`Hi ${other.ownerName || 'there'}! I saw your report on LostLink AI regarding "${myItem.title}". Let's coordinate returning it!`);
+        return cleanPhone.length >= 10 ? `
+          <a href="https://wa.me/${waPhone}?text=${waMsg}" target="_blank" class="btn-notif-action btn-wa">
+            💬 WhatsApp
+          </a>
+          <a href="tel:${cleanPhone}" class="btn-notif-action btn-call">
+            📞 Call
+          </a>
+        ` : '';
+      })()}
+      <a href="https://www.google.com/maps/dir/?api=1&destination=${ADMIN_LAT},${ADMIN_LNG}" target="_blank" class="btn-notif-action btn-maps">
+        📍 Admin Block
+      </a>
     </div>
   </div>
 
@@ -1077,6 +1211,11 @@ function matchCardHTML(m) {
         📱 ${esc(m.lost.ownerPhone||'N/A')}<br>
         📧 ${esc(m.lost.ownerEmail||'')}<br>
         🎓 ${esc(m.lost.ownerBranch||'')} · Sem ${esc(m.lost.ownerSemester||'?')}
+        ${m.lost.ownerPhone && String(m.lost.ownerPhone).replace(/\D/g,'').length >= 10 ? `
+        <div style="margin-top:6px; display:flex; gap:6px;">
+          <a href="https://wa.me/91${String(m.lost.ownerPhone).replace(/\D/g,'')}" target="_blank" style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; text-decoration:none;">💬 WhatsApp</a>
+          <a href="tel:${String(m.lost.ownerPhone).replace(/\D/g,'')}" style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; text-decoration:none;">📞 Call</a>
+        </div>` : ''}
       </div>
     </div>
     <div class="contact-card">
@@ -1086,6 +1225,11 @@ function matchCardHTML(m) {
         📱 ${esc(m.found.ownerPhone||'N/A')}<br>
         📧 ${esc(m.found.ownerEmail||'')}<br>
         🎓 ${esc(m.found.ownerBranch||'')} · Sem ${esc(m.found.ownerSemester||'?')}
+        ${m.found.ownerPhone && String(m.found.ownerPhone).replace(/\D/g,'').length >= 10 ? `
+        <div style="margin-top:6px; display:flex; gap:6px;">
+          <a href="https://wa.me/91${String(m.found.ownerPhone).replace(/\D/g,'')}" target="_blank" style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; text-decoration:none;">💬 WhatsApp</a>
+          <a href="tel:${String(m.found.ownerPhone).replace(/\D/g,'')}" style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; text-decoration:none;">📞 Call</a>
+        </div>` : ''}
       </div>
     </div>
   </div>
@@ -1160,19 +1304,10 @@ function bindEvents() {
   // Auth
   $('#authForm').addEventListener('submit', handleProfileForm);
   $('#googleSignInBtn').addEventListener('click', () => {
-    const typed = $('#authEmail').value.trim().toLowerCase();
-    if (!typed) {
-      toast('Please type your RVU email in the input box first', 'error');
-      return;
-    }
-    if (!RVU_EMAIL_RE.test(typed)) {
-      toast('Enter a valid RVU email ending with @rvu.edu.in', 'error');
-      return;
-    }
-    // Save typed email to compare when Google Sign-in returns
-    state.tempTypedEmail = typed;
+    setAuthLoading(true, 'Connecting to Google...');
     native.signInWithGoogle();
   });
+  $('#authCancelBtn')?.addEventListener('click', resetAuthView);
 
   // Logout button → open modal; modal buttons
   $('#logoutBtn').addEventListener('click', showLogoutModal);
@@ -1249,6 +1384,61 @@ function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// ============================================================
+// 26. PWA INSTALLATION & SERVICE WORKER
+// ============================================================
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+
+(function initPWA() {
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  if (isStandalone || typeof window.LostLinkNative !== 'undefined') return;
+
+  let deferredPrompt = null;
+  const banner = document.getElementById('pwaInstallBanner');
+  const btn = document.getElementById('pwaInstallBtn');
+  const dismiss = document.getElementById('pwaDismissBtn');
+  const sub = document.getElementById('pwaInstallSub');
+  if (!banner || !btn) return;
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+  if (isIOS) {
+    if (sub) sub.textContent = 'Tap Share ⎋ → Add to Home Screen';
+    if (btn) btn.textContent = 'How to Install';
+    btn.addEventListener('click', () => {
+      alert('To install LostLink AI on iPhone:\n\n1. Tap the Share button (square with arrow up at the bottom of Safari)\n2. Scroll down and tap "Add to Home Screen"\n3. Tap "Add" on the top right\n\nLostLink AI will now appear on your iPhone home screen as an app!');
+    });
+    banner.style.display = 'flex';
+  } else {
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      banner.style.display = 'flex';
+    });
+
+    btn.addEventListener('click', async () => {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const choice = await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        banner.style.display = 'none';
+      } else {
+        alert('To install on Android:\nTap your browser menu (three dots ⋮) and select "Install app" or "Add to Home screen".');
+      }
+    });
+  }
+
+  if (dismiss) {
+    dismiss.addEventListener('click', () => {
+      banner.style.display = 'none';
+    });
+  }
+})();
 
 
 
