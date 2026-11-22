@@ -111,47 +111,95 @@ const state = {
 // 4. NATIVE BRIDGE (Android ↔ JS)
 // ============================================================
 const hasNative = typeof window.LostLinkNative !== 'undefined';
-const native = hasNative ? window.LostLinkNative : {
+const native = {
   choosePhoto: () => {
-    let fileInput = document.getElementById('_webPhotoInput');
-    if (!fileInput) {
-      fileInput = document.createElement('input');
-      fileInput.id = '_webPhotoInput';
-      fileInput.type = 'file';
-      fileInput.accept = 'image/*';
-      fileInput.style.display = 'none';
-      document.body.appendChild(fileInput);
-      fileInput.addEventListener('change', () => {
-        if (fileInput.files && fileInput.files[0]) {
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            window.onNativePhotoSelected && window.onNativePhotoSelected(e.target.result);
-          };
-          reader.readAsDataURL(fileInput.files[0]);
-        }
-      });
+    if (hasNative && window.LostLinkNative.choosePhoto) {
+      window.LostLinkNative.choosePhoto();
+    } else {
+      let fileInput = document.getElementById('_webPhotoInput');
+      if (!fileInput) {
+        fileInput = document.createElement('input');
+        fileInput.id = '_webPhotoInput';
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.style.display = 'none';
+        document.body.appendChild(fileInput);
+        fileInput.addEventListener('change', () => {
+          if (fileInput.files && fileInput.files[0]) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              window.onNativePhotoSelected && window.onNativePhotoSelected(e.target.result);
+            };
+            reader.readAsDataURL(fileInput.files[0]);
+          }
+        });
+      }
+      fileInput.click();
     }
-    fileInput.click();
   },
   signInWithGoogle: () => {
-    const promptEmail = prompt('Sign in with RVU Google Account:\nEnter your @rvu.edu.in email:', 'student@rvu.edu.in');
-    if (!promptEmail) {
-      setAuthLoading(false);
-      return;
+    if (hasNative && window.LostLinkNative.signInWithGoogle) {
+      window.LostLinkNative.signInWithGoogle();
+    } else {
+      const promptEmail = prompt('Sign in with RVU Google Account:\nEnter your @rvu.edu.in email:', 'student@rvu.edu.in');
+      if (!promptEmail) {
+        setAuthLoading(false);
+        return;
+      }
+      const cleanEmail = promptEmail.trim().toLowerCase();
+      if (!RVU_EMAIL_RE.test(cleanEmail)) {
+        setAuthLoading(false);
+        toast('Please enter a valid @rvu.edu.in email address', 'error');
+        return;
+      }
+      const defaultName = cleanEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
+        ok: true,
+        name: defaultName,
+        email: cleanEmail,
+        photoUrl: ''
+      });
     }
-    const cleanEmail = promptEmail.trim().toLowerCase();
-    if (!RVU_EMAIL_RE.test(cleanEmail)) {
-      setAuthLoading(false);
-      toast('Please enter a valid @rvu.edu.in email address', 'error');
-      return;
+  },
+  openWhatsApp: (phone, text) => {
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    const waPhone = cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone;
+    const rawText = text || '';
+
+    if (hasNative && window.LostLinkNative.openWhatsApp) {
+      window.LostLinkNative.openWhatsApp(waPhone, rawText);
+    } else {
+      const encoded = encodeURIComponent(rawText);
+      const nativeScheme = `whatsapp://send?phone=${waPhone}&text=${encoded}`;
+      const webFallback = `https://api.whatsapp.com/send?phone=${waPhone}&text=${encoded}`;
+      window.location.href = nativeScheme;
+      setTimeout(() => {
+        window.open(webFallback, '_blank');
+      }, 600);
     }
-    const defaultName = cleanEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
-      ok: true,
-      name: defaultName,
-      email: cleanEmail,
-      photoUrl: ''
-    });
+  },
+  callPhone: (phone) => {
+    const clean = String(phone || '').replace(/[^0-9+]/g, '');
+    if (hasNative && window.LostLinkNative.callPhone) {
+      window.LostLinkNative.callPhone(clean);
+    } else {
+      window.location.href = `tel:${clean}`;
+    }
+  },
+  openMaps: (lat, lng, label) => {
+    if (hasNative && window.LostLinkNative.openMaps) {
+      window.LostLinkNative.openMaps(Number(lat), Number(lng), label || 'RVU Location');
+    } else {
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+      if (isIOS) {
+        window.location.href = `maps://maps.apple.com/?daddr=${lat},${lng}&q=${encodeURIComponent(label || 'RVU')}`;
+      } else {
+        window.location.href = `geo:${lat},${lng}?q=${lat},${lng}(${encodeURIComponent(label || 'RVU')})`;
+        setTimeout(() => {
+          window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+        }, 500);
+      }
+    }
   }
 };
 
@@ -1075,19 +1123,19 @@ function renderNotifications() {
       ${(() => {
         const cleanPhone = String(other.ownerPhone || '').replace(/\D/g, '');
         const waPhone = cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone;
-        const waMsg = encodeURIComponent(`Hi ${other.ownerName || 'there'}! I saw your report on LostLink AI regarding "${myItem.title}". Let's coordinate returning it!`);
+        const rawMsg = `Hi ${other.ownerName || 'there'}! I saw your report on LostLink AI regarding "${myItem.title}". Let's coordinate returning it!`;
         return cleanPhone.length >= 10 ? `
-          <a href="https://wa.me/${waPhone}?text=${waMsg}" target="_blank" class="btn-notif-action btn-wa">
+          <button type="button" class="btn-notif-action btn-wa" onclick="native.openWhatsApp('${waPhone}', '${esc(rawMsg)}'); return false;">
             💬 WhatsApp
-          </a>
-          <a href="tel:${cleanPhone}" class="btn-notif-action btn-call">
+          </button>
+          <button type="button" class="btn-notif-action btn-call" onclick="native.callPhone('${cleanPhone}'); return false;">
             📞 Call
-          </a>
+          </button>
         ` : '';
       })()}
-      <a href="https://www.google.com/maps/dir/?api=1&destination=${ADMIN_LAT},${ADMIN_LNG}" target="_blank" class="btn-notif-action btn-maps">
+      <button type="button" class="btn-notif-action btn-maps" onclick="native.openMaps(${ADMIN_LAT}, ${ADMIN_LNG}, 'RVU Admin Block Collection Point'); return false;">
         📍 Admin Block
-      </a>
+      </button>
     </div>
   </div>
 
@@ -1213,8 +1261,8 @@ function matchCardHTML(m) {
         🎓 ${esc(m.lost.ownerBranch||'')} · Sem ${esc(m.lost.ownerSemester||'?')}
         ${m.lost.ownerPhone && String(m.lost.ownerPhone).replace(/\D/g,'').length >= 10 ? `
         <div style="margin-top:6px; display:flex; gap:6px;">
-          <a href="https://wa.me/91${String(m.lost.ownerPhone).replace(/\D/g,'')}" target="_blank" style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; text-decoration:none;">💬 WhatsApp</a>
-          <a href="tel:${String(m.lost.ownerPhone).replace(/\D/g,'')}" style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; text-decoration:none;">📞 Call</a>
+          <button type="button" onclick="native.openWhatsApp('${String(m.lost.ownerPhone).replace(/\D/g,'')}', 'Hi ${esc(m.lost.ownerName)}! Reaching out via LostLink AI regarding your lost item: ${esc(m.lost.title)}.'); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; border:none; cursor:pointer;">💬 WhatsApp</button>
+          <button type="button" onclick="native.callPhone('${String(m.lost.ownerPhone).replace(/\D/g,'')}'); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; border:none; cursor:pointer;">📞 Call</button>
         </div>` : ''}
       </div>
     </div>
@@ -1227,8 +1275,8 @@ function matchCardHTML(m) {
         🎓 ${esc(m.found.ownerBranch||'')} · Sem ${esc(m.found.ownerSemester||'?')}
         ${m.found.ownerPhone && String(m.found.ownerPhone).replace(/\D/g,'').length >= 10 ? `
         <div style="margin-top:6px; display:flex; gap:6px;">
-          <a href="https://wa.me/91${String(m.found.ownerPhone).replace(/\D/g,'')}" target="_blank" style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; text-decoration:none;">💬 WhatsApp</a>
-          <a href="tel:${String(m.found.ownerPhone).replace(/\D/g,'')}" style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; text-decoration:none;">📞 Call</a>
+          <button type="button" onclick="native.openWhatsApp('${String(m.found.ownerPhone).replace(/\D/g,'')}', 'Hi ${esc(m.found.ownerName)}! Reaching out via LostLink AI regarding the found item: ${esc(m.found.title)}.'); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; border:none; cursor:pointer;">💬 WhatsApp</button>
+          <button type="button" onclick="native.callPhone('${String(m.found.ownerPhone).replace(/\D/g,'')}'); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; border:none; cursor:pointer;">📞 Call</button>
         </div>` : ''}
       </div>
     </div>
