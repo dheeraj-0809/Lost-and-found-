@@ -438,7 +438,40 @@ async function syncReports(showToast=false) {
     updateSyncStatus('Local only');
     $('#firebaseNote') && $('#firebaseNote').classList.remove('hidden');
   }
+
+  const prevCount = state.matches ? state.matches.length : 0;
   state.matches = computeMatches(state.reports);
+  if (state.user && state.matches.length > prevCount) {
+    const myEmail = state.user.email;
+    const newMatches = state.matches.filter(m => m.lost.ownerEmail === myEmail || m.found.ownerEmail === myEmail);
+    if (newMatches.length > 0) {
+      notifyUserOfMatch(newMatches[0]);
+    }
+  }
+}
+
+function notifyUserOfMatch(match) {
+  if (!match || !state.user) return;
+  const iAmLost = match.lost.ownerEmail === state.user.email;
+  const myItem = iAmLost ? match.lost : match.found;
+  const otherItem = iAmLost ? match.found : match.lost;
+  const title = `🎯 Match Alert (${match.confidence}% Match)`;
+  const msg = `${iAmLost ? 'Your lost' : 'Your found'} "${myItem.title}" matched with "${otherItem.title}"!`;
+
+  toast(msg, 'success');
+
+  if ('Notification' in window) {
+    if (Notification.permission === 'granted') {
+      try {
+        new Notification(title, {
+          body: msg,
+          icon: './icon-192.png'
+        });
+      } catch {}
+    } else if (Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }
 }
 
 /** Submit a new report to Firebase + local storage */
@@ -807,7 +840,7 @@ async function dispatchVerificationSms(phone, code) {
   }
 
   // 3. Fallback for Web/iPhone without configured gateway
-  showOtpStatus('📲 Tap "Open Messages App" below to view or send your verification SMS.', 'info');
+  showOtpStatus('📲 Enter free Fast2SMS key below to receive real SMS in your Messages app inbox.', 'info');
   $('#fast2smsSection')?.classList.remove('hidden');
   const keyInput = $('#fast2smsKeyInput');
   if (keyInput) keyInput.value = savedKey;
@@ -1432,15 +1465,47 @@ function updateNotifBadge() {
   const myEmail = state.user.email;
   const seenIds = getSeenIds();
   const clearedIds = getClearedNotifIds();
-  const unseen  = state.matches.filter(m => {
-    if (m.lost.ownerEmail !== myEmail) return false;
-    const id = matchId(m);
-    return !seenIds.includes(id) && !clearedIds.includes(id);
-  }).length;
+  const myMatches = state.matches.filter(m => (m.lost.ownerEmail === myEmail || m.found.ownerEmail === myEmail) && !clearedIds.includes(matchId(m)));
+  const unseen = myMatches.filter(m => !seenIds.includes(matchId(m))).length;
+
+  // Header Bell Badge
   const badge = $('#notifBadge');
-  if (!badge) return;
-  badge.textContent = unseen;
-  badge.classList.toggle('hidden', unseen===0);
+  if (badge) {
+    badge.textContent = unseen;
+    badge.classList.toggle('hidden', unseen === 0);
+  }
+
+  // Home Greeting Card Bell Badge
+  const homeBadge = $('#homeNotifBadge');
+  if (homeBadge) {
+    homeBadge.textContent = unseen;
+    homeBadge.classList.toggle('hidden', unseen === 0);
+  }
+
+  // Bottom Nav Matches Tab Badge
+  const matchesBadge = $('#matchesNotifBadge');
+  if (matchesBadge) {
+    matchesBadge.textContent = myMatches.length;
+    matchesBadge.classList.toggle('hidden', myMatches.length === 0);
+  }
+
+  // Home Screen Match Alert Banner
+  const banner = $('#homeMatchBanner');
+  const bannerText = $('#homeMatchBannerText');
+  if (banner) {
+    if (myMatches.length > 0) {
+      const topMatch = myMatches[0];
+      const iAmLost = topMatch.lost.ownerEmail === myEmail;
+      const myItem = iAmLost ? topMatch.lost : topMatch.found;
+      const otherItem = iAmLost ? topMatch.found : topMatch.lost;
+      if (bannerText) {
+        bannerText.textContent = `${iAmLost ? 'Lost' : 'Found'} "${myItem.title}" matched ${topMatch.confidence}% with "${otherItem.title}"!`;
+      }
+      banner.classList.remove('hidden');
+    } else {
+      banner.classList.add('hidden');
+    }
+  }
 }
 
 // ============================================================
@@ -1632,12 +1697,8 @@ function bindEvents() {
   $('#otpCancelBtn')?.addEventListener('click', closeOtpModal);
   $('#otpVerifyBtn')?.addEventListener('click', verifyEnteredOtp);
   $('#otpResendBtn')?.addEventListener('click', () => openOtpModal(state.otp.phone || $('#authPhone').value.trim()));
-  $('#otpOpenMessagesBtn')?.addEventListener('click', () => {
-    if (!state.otp || !state.otp.phone) return;
-    const smsText = `Your LostLink AI verification OTP is: ${state.otp.code}`;
-    native.sendSms(state.otp.phone, smsText);
-  });
   $('#otpModal')?.addEventListener('click', (e) => { if (e.target === $('#otpModal')) closeOtpModal(); });
+  $('#homeNotifBtn')?.addEventListener('click', () => navigate('notifications'));
   $('#saveFast2smsKeyBtn')?.addEventListener('click', () => {
     const key = $('#fast2smsKeyInput')?.value.trim();
     if (!key) {

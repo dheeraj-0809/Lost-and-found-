@@ -361,9 +361,7 @@ public final class MainActivity extends Activity {
                 smsManager.sendTextMessage("+91" + phone, null, message, null, null);
                 Toast.makeText(this, "📩 Real SMS sent to +91" + phone + "! Check your Messages app.", Toast.LENGTH_LONG).show();
             } catch (Exception e2) {
-                // If background modem send fails, open the native Messages app directly
-                launchNativeSmsApp(phone, message);
-                Toast.makeText(this, "Opening native Messages app...", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Carrier SMS error: " + e2.getMessage(), Toast.LENGTH_SHORT).show();
             }
         }
     }
