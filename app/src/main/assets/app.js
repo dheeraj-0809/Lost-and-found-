@@ -980,7 +980,21 @@ function openOtpModal(phone) {
   // 2. Update UI
   $('#otpTargetPhone').textContent = `+91 ${clean.slice(0, 5)} ${clean.slice(5)}`;
   $$('.otp-digit').forEach(inp => { inp.value = ''; });
-  $('#otpQuickFillBtn')?.classList.add('hidden');
+  
+  const codeDisplay = $('#otpCodeNumber');
+  if (codeDisplay) codeDisplay.textContent = code;
+
+  const directFillBtn = $('#otpDirectAutoFillBtn');
+  if (directFillBtn) {
+    directFillBtn.onclick = () => {
+      const digits = String(code).split('');
+      $$('.otp-digit').forEach((inp, idx) => {
+        inp.value = digits[idx] || '';
+      });
+      toast('Verification code filled! Confirming...', 'success');
+      setTimeout(verifyEnteredOtp, 300);
+    };
+  }
 
   // 3. Open modal
   const modal = $('#otpModal');

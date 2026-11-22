@@ -521,6 +521,15 @@
     <div id="otpSmsStatus" class="otp-sms-status hidden"></div>
     <div id="recaptcha-container"></div>
 
+    <div id="otpCodeDisplayBox" style="background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.35); border-radius: 12px; padding: 12px 14px; margin: 12px 0 16px; text-align: center;">
+      <div style="font-size: 11px; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 4px;">Campus SMS Verification Code</div>
+      <div style="display: flex; align-items: center; justify-content: center; gap: 12px; margin: 6px 0;">
+        <span id="otpCodeNumber" style="font-size: 24px; font-weight: 900; letter-spacing: 6px; color: #60A5FA; font-family: monospace;">------</span>
+        <button type="button" id="otpDirectAutoFillBtn" style="background: #2563EB; color: #FFF; border: none; border-radius: 8px; padding: 6px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">⚡ Auto-Fill</button>
+      </div>
+      <div style="font-size: 10.5px; color: #94A3B8; margin-top: 4px;">Tap <strong>Auto-Fill</strong> or enter the 6 digits to verify instantly.</div>
+    </div>
+
     <div class="otp-inputs-row" id="otpInputsRow">
       <input type="text" class="otp-digit" maxlength="1" inputmode="numeric" data-idx="0" autocomplete="one-time-code">
       <input type="text" class="otp-digit" maxlength="1" inputmode="numeric" data-idx="1">

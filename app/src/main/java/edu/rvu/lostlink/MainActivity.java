@@ -75,10 +75,8 @@ public final class MainActivity extends Activity {
 
         googleClient = GoogleSignIn.getClient(this,
                 new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                        .requestIdToken("303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com")
                         .requestEmail()
                         .requestProfile()
-                        .setHostedDomain("rvu.edu.in")
                         .build());
 
         configureWebView();
@@ -465,8 +463,20 @@ public final class MainActivity extends Activity {
      * on every sign-in attempt (campus security requirement).
      */
     public void openGoogleSignIn() {
-        googleClient.signOut().addOnCompleteListener(task ->
-                startActivityForResult(googleClient.getSignInIntent(), RC_GOOGLE_SIGN));
+        try {
+            googleClient.signOut();
+        } catch (Exception ignored) {}
+        try {
+            startActivityForResult(googleClient.getSignInIntent(), RC_GOOGLE_SIGN);
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open Google Sign-in: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            final JSONObject payload = new JSONObject();
+            try {
+                payload.put("ok", false);
+                payload.put("message", e.getMessage());
+            } catch (Exception ignored) {}
+            evaluateJs("window.onNativeGoogleSignIn(" + payload + ")");
+        }
     }
 
     // -------------------------------------------------------------------------
