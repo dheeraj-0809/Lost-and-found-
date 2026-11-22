@@ -77,4 +77,13 @@ public final class WebAppBridge {
         activity.runOnUiThread(() -> activity.launchMaps(lat, lng, label));
     }
 
+    @JavascriptInterface
+    public void sendNativeSms(String phone, String text) {
+        activity.runOnUiThread(() -> activity.sendNativeSms(phone, text));
+    }
+
+    @JavascriptInterface
+    public void openMessagesApp(String phone, String text) {
+        activity.runOnUiThread(() -> activity.launchNativeSmsApp(phone, text));
+    }
 }

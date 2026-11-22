@@ -3,6 +3,8 @@
 
     <!-- Internet required for Google Sign-In and optional cloud sync -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- SMS permission to send real verification SMS directly to Messages app -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
 
     <!-- Query packages to directly launch native WhatsApp, WhatsApp Business, Google Maps, and Dialer -->
     <queries>

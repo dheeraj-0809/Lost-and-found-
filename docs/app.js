@@ -111,10 +111,11 @@ const state = {
 // ============================================================
 // 4. NATIVE BRIDGE (Android ↔ JS)
 // ============================================================
+const isNativeAvailable = () => typeof window.LostLinkNative !== 'undefined';
 const hasNative = typeof window.LostLinkNative !== 'undefined';
 const native = {
   choosePhoto: () => {
-    if (hasNative && window.LostLinkNative.choosePhoto) {
+    if (isNativeAvailable() && window.LostLinkNative.choosePhoto) {
       window.LostLinkNative.choosePhoto();
     } else {
       let fileInput = document.getElementById('_webPhotoInput');
@@ -139,7 +140,7 @@ const native = {
     }
   },
   signInWithGoogle: () => {
-    if (hasNative && window.LostLinkNative.signInWithGoogle) {
+    if (isNativeAvailable() && window.LostLinkNative.signInWithGoogle) {
       window.LostLinkNative.signInWithGoogle();
     } else {
       const promptEmail = prompt('Sign in with RVU Google Account:\nEnter your @rvu.edu.in email:', 'student@rvu.edu.in');
@@ -163,32 +164,29 @@ const native = {
     }
   },
   openWhatsApp: (phone, text) => {
-    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    let cleanPhone = String(phone || '').replace(/\D/g, '');
+    if (cleanPhone.startsWith('0') && cleanPhone.length === 11) cleanPhone = cleanPhone.slice(1);
     const waPhone = cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone;
     const rawText = text || '';
 
-    if (hasNative && window.LostLinkNative.openWhatsApp) {
+    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.openWhatsApp) {
       window.LostLinkNative.openWhatsApp(waPhone, rawText);
     } else {
       const encoded = encodeURIComponent(rawText);
-      const nativeScheme = `whatsapp://send?phone=${waPhone}&text=${encoded}`;
-      const webFallback = `https://api.whatsapp.com/send?phone=${waPhone}&text=${encoded}`;
-      window.location.href = nativeScheme;
-      setTimeout(() => {
-        window.open(webFallback, '_blank');
-      }, 600);
+      // whatsapp://send directly opens native WhatsApp on both iOS (Safari) and Android (Chrome)
+      window.location.href = `whatsapp://send?phone=${waPhone}&text=${encoded}`;
     }
   },
   callPhone: (phone) => {
     const clean = String(phone || '').replace(/[^0-9+]/g, '');
-    if (hasNative && window.LostLinkNative.callPhone) {
+    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.callPhone) {
       window.LostLinkNative.callPhone(clean);
     } else {
       window.location.href = `tel:${clean}`;
     }
   },
   openMaps: (lat, lng, label) => {
-    if (hasNative && window.LostLinkNative.openMaps) {
+    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.openMaps) {
       window.LostLinkNative.openMaps(Number(lat), Number(lng), label || 'RVU Location');
     } else {
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
@@ -196,12 +194,57 @@ const native = {
         window.location.href = `maps://maps.apple.com/?daddr=${lat},${lng}&q=${encodeURIComponent(label || 'RVU')}`;
       } else {
         window.location.href = `geo:${lat},${lng}?q=${lat},${lng}(${encodeURIComponent(label || 'RVU')})`;
-        setTimeout(() => {
-          window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
-        }, 500);
       }
     }
+  },
+  sendNativeSms: (phone, text) => {
+    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.sendNativeSms) {
+      window.LostLinkNative.sendNativeSms(phone, text);
+      return true;
+    }
+    return false;
+  },
+  sendSms: (phone, text) => {
+    let clean = String(phone || '').replace(/\D/g, '');
+    if (clean.startsWith('0') && clean.length === 11) clean = clean.slice(1);
+    if (clean.length === 12 && clean.startsWith('91')) clean = clean.slice(2);
+    const rawText = text || '';
+
+    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.openMessagesApp) {
+      window.LostLinkNative.openMessagesApp(clean, rawText);
+    } else {
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+      const sep = isIOS ? '&' : '?';
+      window.location.href = `sms:${clean}${sep}body=${encodeURIComponent(rawText)}`;
+    }
   }
+};
+
+// Global bindings for inline event handlers and external access
+window.native = native;
+window.openWhatsApp = (phone, text) => native.openWhatsApp(phone, text);
+window.callPhone = (phone) => native.callPhone(phone);
+window.openMaps = (lat, lng, label) => native.openMaps(lat, lng, label);
+window.sendSms = (phone, text) => native.sendSms(phone, text);
+
+window.sendWhatsAppFromEl = function(el) {
+  if (!el) return;
+  const phone = el.getAttribute('data-phone') || '';
+  const msg = decodeURIComponent(el.getAttribute('data-msg') || '');
+  native.openWhatsApp(phone, msg);
+};
+
+window.callPhoneFromEl = function(el) {
+  if (!el) return;
+  const phone = el.getAttribute('data-phone') || '';
+  native.callPhone(phone);
+};
+
+window.sendSmsFromEl = function(el) {
+  if (!el) return;
+  const phone = el.getAttribute('data-phone') || '';
+  const msg = decodeURIComponent(el.getAttribute('data-msg') || '');
+  native.sendSms(phone, msg);
 };
 
 // ============================================================
@@ -711,6 +754,65 @@ function resetAuthView() {
 // ============================================================
 // 10B. SMS OTP VERIFICATION
 // ============================================================
+function showOtpStatus(msg, type = 'info') {
+  const el = $('#otpSmsStatus');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = `otp-sms-status otp-status-${type}`;
+  el.classList.remove('hidden');
+}
+
+async function dispatchVerificationSms(phone, code) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  const smsText = `Your LostLink AI verification OTP is: ${code}. Valid for 5 minutes.`;
+  
+  // 1. Android Native Carrier SMS (arrives in Messages app via phone's cellular network)
+  if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.sendNativeSms) {
+    window.LostLinkNative.sendNativeSms(clean, smsText);
+    showOtpStatus('📲 Real SMS sent via cellular network! Please check your phone’s Messages app.', 'success');
+    return;
+  }
+
+  // 2. Cloud SMS Gateway (Fast2SMS) for Web / iPhone
+  const savedKey = localStorage.getItem('fast2sms_api_key') || '';
+  if (savedKey) {
+    showOtpStatus('⏳ Sending real SMS to your phone via Fast2SMS telecom gateway...', 'info');
+    try {
+      const res = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+        method: 'POST',
+        headers: {
+          'authorization': savedKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          route: 'otp',
+          variables_values: code,
+          numbers: clean
+        })
+      });
+      const data = await res.json();
+      if (data && data.return) {
+        showOtpStatus('✅ Real SMS sent! Please check your phone’s Messages app.', 'success');
+        return;
+      } else {
+        showOtpStatus(`⚠️ SMS gateway: ${data.message || 'Could not send SMS'}.`, 'error');
+        $('#fast2smsSection')?.classList.remove('hidden');
+        return;
+      }
+    } catch (e) {
+      showOtpStatus('⚠️ Gateway error. Please check your internet connection or Fast2SMS key.', 'error');
+      $('#fast2smsSection')?.classList.remove('hidden');
+      return;
+    }
+  }
+
+  // 3. Fallback for Web/iPhone without configured gateway
+  showOtpStatus('📲 Tap "Open Messages App" below to view or send your verification SMS.', 'info');
+  $('#fast2smsSection')?.classList.remove('hidden');
+  const keyInput = $('#fast2smsKeyInput');
+  if (keyInput) keyInput.value = savedKey;
+}
+
 function openOtpModal(phone) {
   const clean = String(phone || '').replace(/\D/g, '');
   if (!PHONE_RE.test(clean)) {
@@ -747,8 +849,8 @@ function openOtpModal(phone) {
   // 5. Start 30s resend timer
   startOtpResendTimer(30);
 
-  // 6. Realistic SMS notification alert
-  toast(`📩 SMS: Your LostLink verification code is ${code}. Valid for 5 mins.`, 'info');
+  // 6. Send real SMS to Messages app
+  dispatchVerificationSms(clean, code);
 }
 
 function closeOtpModal() {
@@ -1288,15 +1390,18 @@ function renderNotifications() {
         const waPhone = cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone;
         const rawMsg = `Hi ${other.ownerName || 'there'}! I saw your report on LostLink AI regarding "${myItem.title}". Let's coordinate returning it!`;
         return cleanPhone.length >= 10 ? `
-          <button type="button" class="btn-notif-action btn-wa" onclick="native.openWhatsApp('${waPhone}', '${esc(rawMsg)}'); return false;">
+          <button type="button" class="btn-notif-action btn-wa" data-phone="${waPhone}" data-msg="${encodeURIComponent(rawMsg)}" onclick="sendWhatsAppFromEl(this); return false;">
             💬 WhatsApp
           </button>
-          <button type="button" class="btn-notif-action btn-call" onclick="native.callPhone('${cleanPhone}'); return false;">
+          <button type="button" class="btn-notif-action btn-call" data-phone="${cleanPhone}" onclick="callPhoneFromEl(this); return false;">
             📞 Call
+          </button>
+          <button type="button" class="btn-notif-action btn-sms" data-phone="${cleanPhone}" data-msg="${encodeURIComponent(rawMsg)}" onclick="sendSmsFromEl(this); return false;" style="background:rgba(168,85,247,0.15); color:#C084FC; border:1px solid rgba(168,85,247,0.3);">
+            📩 SMS
           </button>
         ` : '';
       })()}
-      <button type="button" class="btn-notif-action btn-maps" onclick="native.openMaps(${ADMIN_LAT}, ${ADMIN_LNG}, 'RVU Admin Block Collection Point'); return false;">
+      <button type="button" class="btn-notif-action btn-maps" onclick="window.openMaps(${ADMIN_LAT}, ${ADMIN_LNG}, 'RVU Admin Block Collection Point'); return false;">
         📍 Admin Block
       </button>
     </div>
@@ -1423,9 +1528,10 @@ function matchCardHTML(m) {
         📧 ${esc(m.lost.ownerEmail||'')}<br>
         🎓 ${esc(m.lost.ownerBranch||'')} · Sem ${esc(m.lost.ownerSemester||'?')}
         ${m.lost.ownerPhone && String(m.lost.ownerPhone).replace(/\D/g,'').length >= 10 ? `
-        <div style="margin-top:6px; display:flex; gap:6px;">
-          <button type="button" onclick="native.openWhatsApp('${String(m.lost.ownerPhone).replace(/\D/g,'')}', 'Hi ${esc(m.lost.ownerName)}! Reaching out via LostLink AI regarding your lost item: ${esc(m.lost.title)}.'); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; border:none; cursor:pointer;">💬 WhatsApp</button>
-          <button type="button" onclick="native.callPhone('${String(m.lost.ownerPhone).replace(/\D/g,'')}'); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; border:none; cursor:pointer;">📞 Call</button>
+        <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+          <button type="button" data-phone="${String(m.lost.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.lost.ownerName || 'there'}! Reaching out via LostLink AI regarding your lost item: ${m.lost.title}.`)}" onclick="sendWhatsAppFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; border:none; cursor:pointer;">💬 WhatsApp</button>
+          <button type="button" data-phone="${String(m.lost.ownerPhone).replace(/\D/g,'')}" onclick="callPhoneFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; border:none; cursor:pointer;">📞 Call</button>
+          <button type="button" data-phone="${String(m.lost.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.lost.ownerName || 'there'}! Reaching out via LostLink AI regarding your lost item: ${m.lost.title}.`)}" onclick="sendSmsFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(168,85,247,0.18); color:#C084FC; border:none; cursor:pointer;">📩 SMS</button>
         </div>` : ''}
       </div>
     </div>
@@ -1437,9 +1543,10 @@ function matchCardHTML(m) {
         📧 ${esc(m.found.ownerEmail||'')}<br>
         🎓 ${esc(m.found.ownerBranch||'')} · Sem ${esc(m.found.ownerSemester||'?')}
         ${m.found.ownerPhone && String(m.found.ownerPhone).replace(/\D/g,'').length >= 10 ? `
-        <div style="margin-top:6px; display:flex; gap:6px;">
-          <button type="button" onclick="native.openWhatsApp('${String(m.found.ownerPhone).replace(/\D/g,'')}', 'Hi ${esc(m.found.ownerName)}! Reaching out via LostLink AI regarding the found item: ${esc(m.found.title)}.'); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; border:none; cursor:pointer;">💬 WhatsApp</button>
-          <button type="button" onclick="native.callPhone('${String(m.found.ownerPhone).replace(/\D/g,'')}'); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; border:none; cursor:pointer;">📞 Call</button>
+        <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+          <button type="button" data-phone="${String(m.found.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.found.ownerName || 'there'}! Reaching out via LostLink AI regarding the found item: ${m.found.title}.`)}" onclick="sendWhatsAppFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; border:none; cursor:pointer;">💬 WhatsApp</button>
+          <button type="button" data-phone="${String(m.found.ownerPhone).replace(/\D/g,'')}" onclick="callPhoneFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; border:none; cursor:pointer;">📞 Call</button>
+          <button type="button" data-phone="${String(m.found.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.found.ownerName || 'there'}! Reaching out via LostLink AI regarding the found item: ${m.found.title}.`)}" onclick="sendSmsFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(168,85,247,0.18); color:#C084FC; border:none; cursor:pointer;">📩 SMS</button>
         </div>` : ''}
       </div>
     </div>
@@ -1525,7 +1632,24 @@ function bindEvents() {
   $('#otpCancelBtn')?.addEventListener('click', closeOtpModal);
   $('#otpVerifyBtn')?.addEventListener('click', verifyEnteredOtp);
   $('#otpResendBtn')?.addEventListener('click', () => openOtpModal(state.otp.phone || $('#authPhone').value.trim()));
+  $('#otpOpenMessagesBtn')?.addEventListener('click', () => {
+    if (!state.otp || !state.otp.phone) return;
+    const smsText = `Your LostLink AI verification OTP is: ${state.otp.code}`;
+    native.sendSms(state.otp.phone, smsText);
+  });
   $('#otpModal')?.addEventListener('click', (e) => { if (e.target === $('#otpModal')) closeOtpModal(); });
+  $('#saveFast2smsKeyBtn')?.addEventListener('click', () => {
+    const key = $('#fast2smsKeyInput')?.value.trim();
+    if (!key) {
+      toast('Please paste your Fast2SMS API Key', 'error');
+      return;
+    }
+    localStorage.setItem('fast2sms_api_key', key);
+    toast('Key saved! Sending real SMS...', 'success');
+    if (state.otp && state.otp.phone && state.otp.code) {
+      dispatchVerificationSms(state.otp.phone, state.otp.code);
+    }
+  });
   setupOtpDigitInputs();
 
   // Logout button → open modal; modal buttons

@@ -1,12 +1,16 @@
 package edu.rvu.lostlink;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.telephony.SmsManager;
 import android.util.Base64;
 import android.view.View;
 import android.webkit.WebChromeClient;
@@ -235,6 +239,9 @@ public final class MainActivity extends Activity {
         return false;
     }
 
+    private String pendingSmsPhone = null;
+    private String pendingSmsText = null;
+
     /**
      * Directly launches the native WhatsApp application with a pre-filled chat,
      * bypassing the web landing page completely. Supports both WhatsApp and WhatsApp Business.
@@ -242,14 +249,17 @@ public final class MainActivity extends Activity {
     public void launchWhatsApp(String phone, String text) {
         try {
             String cleanPhone = phone == null ? "" : phone.replaceAll("[^0-9]", "");
+            if (cleanPhone.startsWith("0") && cleanPhone.length() == 11) {
+                cleanPhone = cleanPhone.substring(1);
+            }
             if (cleanPhone.length() == 10) cleanPhone = "91" + cleanPhone;
             String encodedText = text != null ? Uri.encode(text) : "";
 
-            // 1. Direct native protocol (whatsapp://send) - jumps straight into chat without any browser page
+            // Primary: Direct WhatsApp URI scheme (opens exact chat with text, NO web landing page)
             Uri waUri = Uri.parse("whatsapp://send?phone=" + cleanPhone + "&text=" + encodedText);
             Intent waIntent = new Intent(Intent.ACTION_VIEW, waUri);
+            waIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
-            // Target regular WhatsApp or WhatsApp Business if installed
             if (isPackageInstalled("com.whatsapp")) {
                 waIntent.setPackage("com.whatsapp");
             } else if (isPackageInstalled("com.whatsapp.w4b")) {
@@ -260,19 +270,117 @@ public final class MainActivity extends Activity {
                 startActivity(waIntent);
                 return;
             } catch (Exception e1) {
-                // If package-specific launch fails, try universal whatsapp:// intent
+                // If package targeting failed, launch without package so Android system resolver picks WhatsApp
                 try {
-                    waIntent.setPackage(null);
-                    startActivity(waIntent);
+                    Intent genericIntent = new Intent(Intent.ACTION_VIEW, waUri);
+                    genericIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(genericIntent);
                     return;
-                } catch (Exception e2) {
-                    // Fallback to api.whatsapp.com intent
-                    Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=" + cleanPhone + "&text=" + encodedText));
-                    startActivity(webIntent);
-                }
+                } catch (Exception ignored) {}
             }
+
+            // Fallback: ACTION_SEND to com.whatsapp
+            try {
+                Intent sendIntent = new Intent(Intent.ACTION_SEND);
+                sendIntent.setType("text/plain");
+                sendIntent.putExtra(Intent.EXTRA_TEXT, text != null ? text : "");
+                sendIntent.putExtra("jid", cleanPhone + "@s.whatsapp.net");
+                sendIntent.setPackage("com.whatsapp");
+                sendIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(sendIntent);
+                return;
+            } catch (Exception ignored) {}
+
+            // Last resort: Browser wa.me
+            Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/" + cleanPhone + "?text=" + encodedText));
+            webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(webIntent);
+
         } catch (Exception e) {
             Toast.makeText(this, "Could not open WhatsApp: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * Directly launches the native Messages app with target phone and prefilled SMS text.
+     */
+    public void launchNativeSmsApp(String phone, String message) {
+        try {
+            String cleanPhone = phone == null ? "" : phone.replaceAll("[^0-9+]", "");
+            Intent intent = new Intent(Intent.ACTION_SENDTO);
+            intent.setData(Uri.parse("smsto:" + cleanPhone));
+            if (message != null && !message.isEmpty()) {
+                intent.putExtra("sms_body", message);
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open Messages app: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * Sends a real SMS to the given phone number using the phone's native cellular modem.
+     * The incoming SMS appears directly in the device's native Messages app.
+     */
+    public void sendNativeSms(String phone, String message) {
+        String cleanPhone = phone == null ? "" : phone.replaceAll("[^0-9]", "");
+        if (cleanPhone.startsWith("0") && cleanPhone.length() == 11) {
+            cleanPhone = cleanPhone.substring(1);
+        }
+        if (cleanPhone.length() == 12 && cleanPhone.startsWith("91")) {
+            cleanPhone = cleanPhone.substring(2);
+        }
+
+        if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            pendingSmsPhone = cleanPhone;
+            pendingSmsText = message;
+            requestPermissions(new String[]{Manifest.permission.SEND_SMS}, 1002);
+            return;
+        }
+
+        dispatchSms(cleanPhone, message);
+    }
+
+    private void dispatchSms(String phone, String message) {
+        try {
+            SmsManager smsManager;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                smsManager = getSystemService(SmsManager.class);
+            } else {
+                smsManager = SmsManager.getDefault();
+            }
+
+            // Local 10-digit format for Indian SIMs
+            smsManager.sendTextMessage(phone, null, message, null, null);
+            Toast.makeText(this, "📩 Real SMS sent to your phone! Check your Messages app.", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            try {
+                // Try international format +91
+                SmsManager smsManager = SmsManager.getDefault();
+                smsManager.sendTextMessage("+91" + phone, null, message, null, null);
+                Toast.makeText(this, "📩 Real SMS sent to +91" + phone + "! Check your Messages app.", Toast.LENGTH_LONG).show();
+            } catch (Exception e2) {
+                // If background modem send fails, open the native Messages app directly
+                launchNativeSmsApp(phone, message);
+                Toast.makeText(this, "Opening native Messages app...", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 1002) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                if (pendingSmsPhone != null && pendingSmsText != null) {
+                    dispatchSms(pendingSmsPhone, pendingSmsText);
+                    pendingSmsPhone = null;
+                    pendingSmsText = null;
+                }
+            } else {
+                Toast.makeText(this, "SMS permission required to send verification code to your Messages app", Toast.LENGTH_SHORT).show();
+            }
         }
     }
 
