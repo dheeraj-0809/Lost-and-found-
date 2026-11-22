@@ -1,10 +1,10 @@
-// LostLink AI — Service Worker for PWA
-const CACHE_NAME = 'lostlink-pwa-v1';
+// LostLink AI — Service Worker (Network-First Strategy for Instant Updates)
+const CACHE_NAME = 'lostlink-v5-network-first';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
-  './styles.css',
-  './app.js',
+  './styles.css?v=5.0',
+  './app.js?v=5.0',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
@@ -12,10 +12,11 @@ const ASSETS_TO_CACHE = [
 ];
 
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE);
-    }).then(() => self.skipWaiting())
+      return cache.addAll(ASSETS_TO_CACHE).catch(() => {});
+    })
   );
 });
 
@@ -34,19 +35,28 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Don't intercept Firebase or external API calls
-  if (event.request.url.includes('firebaseio.com') ||
+  // Never intercept Firebase, Google OAuth, or external APIs
+  if (event.request.method !== 'GET' ||
+      event.request.url.includes('firebaseio.com') ||
       event.request.url.includes('googleapis.com') ||
+      event.request.url.includes('accounts.google.com') ||
       event.request.url.includes('qrserver.com')) {
     return;
   }
 
+  // Network-First strategy: always fetch freshest assets from server when online
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(event.request);
-    })
+    fetch(event.request)
+      .then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200) {
+          const resClone = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resClone));
+        }
+        return networkResponse;
+      })
+      .catch(() => {
+        // Fallback to cache when offline
+        return caches.match(event.request);
+      })
   );
 });
