@@ -47,12 +47,12 @@ CLOUD_APK_URL = "https://github.com/dheeraj-0809/Lost-and-found-/raw/main/LostLi
 LOCAL_WEB_URL = f"http://{LOCAL_IP}:{PORT}/app/"
 LOCAL_APK_URL = f"http://{LOCAL_IP}:{PORT}/{APK_NAME}"
 
-# QR Codes via fast CDN
-QR_CLOUD_WEB = f"https://api.qrserver.com/v1/create-qr-code/?size=260x260&data={urllib.parse.quote(CLOUD_WEB_URL)}&color=10B981&bgcolor=060D1A&margin=2"
-QR_CLOUD_APK = f"https://api.qrserver.com/v1/create-qr-code/?size=260x260&data={urllib.parse.quote(CLOUD_APK_URL)}&color=2563EB&bgcolor=060D1A&margin=2"
+# QR Codes via fast CDN (High-contrast black-on-white for instant iPhone & Android camera scanning)
+QR_CLOUD_WEB = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={urllib.parse.quote(CLOUD_WEB_URL)}&margin=10"
+QR_CLOUD_APK = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={urllib.parse.quote(CLOUD_APK_URL)}&margin=10"
 
-QR_LOCAL_WEB = f"https://api.qrserver.com/v1/create-qr-code/?size=260x260&data={urllib.parse.quote(LOCAL_WEB_URL)}&color=10B981&bgcolor=060D1A&margin=2"
-QR_LOCAL_APK = f"https://api.qrserver.com/v1/create-qr-code/?size=260x260&data={urllib.parse.quote(LOCAL_APK_URL)}&color=2563EB&bgcolor=060D1A&margin=2"
+QR_LOCAL_WEB = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={urllib.parse.quote(LOCAL_WEB_URL)}&margin=10"
+QR_LOCAL_APK = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={urllib.parse.quote(LOCAL_APK_URL)}&margin=10"
 
 HTML = f"""<!DOCTYPE html>
 <html lang="en">
