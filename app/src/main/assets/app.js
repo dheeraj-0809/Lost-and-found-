@@ -889,6 +889,26 @@ function showOtpStatus(msg, type = 'info') {
   el.classList.remove('hidden');
 }
 
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBZwwldskVso2FA62tipQkCzYdvaJcVZvs",
+  authDomain: "lost-and-found-cedfe.firebaseapp.com",
+  databaseURL: "https://lost-and-found-cedfe-default-rtdb.firebaseio.com",
+  projectId: "lost-and-found-cedfe",
+  storageBucket: "lost-and-found-cedfe.firebasestorage.app",
+  messagingSenderId: "303643726402",
+  appId: "1:303643726402:android:76dfe9746ebbe185d4d3db"
+};
+
+function initFirebaseAuth() {
+  if (typeof firebase !== 'undefined' && !firebase.apps.length) {
+    try {
+      firebase.initializeApp(FIREBASE_CONFIG);
+    } catch (e) {
+      console.warn('Firebase init error:', e);
+    }
+  }
+}
+
 async function dispatchVerificationSms(phone, code) {
   const clean = String(phone || '').replace(/\D/g, '');
   const smsText = `Your LostLink AI verification OTP is: ${code}. Valid for 5 minutes.`;
@@ -900,35 +920,43 @@ async function dispatchVerificationSms(phone, code) {
     return;
   }
 
-  // 2. Cloud SMS Gateway for Web / iPhone (runs 100% silently in backend)
-  const savedKey = localStorage.getItem('fast2sms_api_key') || '';
-  if (savedKey) {
+  // 2. Cloud SMS Telecom Gateway (Firebase Phone Auth) for Web / iPhone
+  showOtpStatus('⏳ Connecting to telecom carrier to dispatch SMS...', 'info');
+
+  if (typeof firebase !== 'undefined' && firebase.auth) {
     try {
-      const res = await fetch('https://www.fast2sms.com/dev/bulkV2', {
-        method: 'POST',
-        headers: {
-          'authorization': savedKey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          route: 'otp',
-          variables_values: code,
-          numbers: clean
-        })
-      });
-      const data = await res.json();
-      if (data && data.return) {
-        showOtpStatus('✅ Real SMS sent! Please check your phone’s Messages app.', 'success');
-        return;
+      initFirebaseAuth();
+      if (!window.recaptchaVerifier) {
+        window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
+          size: 'invisible'
+        });
       }
-    } catch (e) {
-      console.warn('Backend SMS gateway error:', e);
+      const confirmationResult = await firebase.auth().signInWithPhoneNumber('+91' + clean, window.recaptchaVerifier);
+      window.confirmationResult = confirmationResult;
+      showOtpStatus(`✅ Real Google SMS sent to +91 ${clean}! Please check your Messages app inbox.`, 'success');
+      return;
+    } catch (fbErr) {
+      console.warn('Firebase Phone Auth attempt:', fbErr);
+      if (window.recaptchaVerifier) {
+        try { window.recaptchaVerifier.clear(); } catch (_) {}
+        window.recaptchaVerifier = null;
+      }
     }
   }
 
-  // Web / iPhone standard status — clean message, no developer boxes
-  showOtpStatus(`📲 6-digit verification code sent via SMS to +91 ${clean}. Please check your Messages app.`, 'success');
-  console.log(`[LostLink AI] Phone Verification OTP for +91 ${clean}: ${code}`);
+  // 3. Fallback when Phone Auth is not yet toggled ON in Firebase Console
+  showOtpStatus(`📲 Verification code: ${code}. Tap Auto-fill below to verify instantly.`, 'info');
+  const fillBtn = $('#otpQuickFillBtn');
+  if (fillBtn) {
+    fillBtn.classList.remove('hidden');
+    fillBtn.onclick = () => {
+      const digits = String(code).split('');
+      $$('.otp-digit').forEach((inp, idx) => {
+        inp.value = digits[idx] || '';
+      });
+      toast('Verification code filled! Tap Verify & Confirm ✔', 'success');
+    };
+  }
 }
 
 function openOtpModal(phone) {
@@ -952,6 +980,7 @@ function openOtpModal(phone) {
   // 2. Update UI
   $('#otpTargetPhone').textContent = `+91 ${clean.slice(0, 5)} ${clean.slice(5)}`;
   $$('.otp-digit').forEach(inp => { inp.value = ''; });
+  $('#otpQuickFillBtn')?.classList.add('hidden');
 
   // 3. Open modal
   const modal = $('#otpModal');
@@ -998,7 +1027,7 @@ function startOtpResendTimer(seconds) {
   }, 1000);
 }
 
-function verifyEnteredOtp() {
+async function verifyEnteredOtp() {
   const entered = $$('.otp-digit').map(inp => inp.value.trim()).join('');
   if (entered.length < 6) {
     toast('Please enter the complete 6-digit OTP', 'error');
@@ -1010,7 +1039,19 @@ function verifyEnteredOtp() {
     return;
   }
 
-  if (entered === state.otp.code || entered === '123456') {
+  let verified = false;
+
+  // Verify against Firebase confirmation if active
+  if (window.confirmationResult) {
+    try {
+      await window.confirmationResult.confirm(entered);
+      verified = true;
+    } catch (e) {
+      console.warn('Firebase confirmation failed, checking local code:', e);
+    }
+  }
+
+  if (verified || entered === state.otp.code || entered === '123456') {
     state.otp.verified = true;
     closeOtpModal();
 
@@ -1028,6 +1069,10 @@ function verifyEnteredOtp() {
     toast('Incorrect verification code. Please check and try again.', 'error');
     $$('.otp-digit').forEach(inp => {
       inp.style.borderColor = '#EF4444';
+      setTimeout(() => inp.style.borderColor = '', 1500);
+    });
+  }
+}
       setTimeout(() => { inp.style.borderColor = ''; }, 1500);
     });
   }

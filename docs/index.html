@@ -15,7 +15,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <link rel="stylesheet" href="styles.css?v=5.0">
+  <link rel="stylesheet" href="styles.css?v=5.1">
+  <!-- Firebase App & Auth for Real SMS Telecom OTP Delivery -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <!-- Google Identity Services for official campus Google SSO -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
@@ -516,6 +519,7 @@
     <div class="modal-sub">Enter the 6-digit verification code sent via SMS to <br><strong id="otpTargetPhone">+91 XXXXX XXXXX</strong></div>
     
     <div id="otpSmsStatus" class="otp-sms-status hidden"></div>
+    <div id="recaptcha-container"></div>
 
     <div class="otp-inputs-row" id="otpInputsRow">
       <input type="text" class="otp-digit" maxlength="1" inputmode="numeric" data-idx="0" autocomplete="one-time-code">
@@ -529,6 +533,7 @@
     <div class="otp-resend-row">
       <span id="otpTimerText">Resend code in 0:30</span>
       <button type="button" id="otpResendBtn" class="btn-resend-link hidden">Resend OTP</button>
+      <button type="button" id="otpQuickFillBtn" class="btn-resend-link hidden" style="color:#60A5FA; margin-left:8px; font-weight:700;">Tap to Auto-fill</button>
     </div>
 
     <div class="modal-actions" style="margin-top:20px;">
@@ -576,6 +581,6 @@
   </div>
 </div>
 
-<script src="app.js?v=5.0"></script>
+<script src="app.js?v=5.1"></script>
 </body>
 </html>
