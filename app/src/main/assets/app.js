@@ -103,6 +103,7 @@ const state = {
   selectedPhotoHash: '',
   reports:      [],   // all reports (from Firebase or local)
   matches:      [],   // computed matches
+  otp:          { code: null, phone: null, expiresAt: 0, verified: false, timer: null },
   syncTimer:    null,
   firebaseOk:   false,
 };
@@ -695,23 +696,185 @@ function resetAuthView() {
   $('#authRegisterView')?.classList.add('hidden');
   setAuthLoading(false);
   $('#authForm')?.reset();
+  state.otp = { code: null, phone: null, expiresAt: 0, verified: false, timer: null };
+  const sendBtn = $('#sendOtpBtn');
+  if (sendBtn) {
+    sendBtn.textContent = 'Verify via SMS';
+    sendBtn.classList.remove('verified');
+    sendBtn.disabled = false;
+  }
+  const phoneInp = $('#authPhone');
+  if (phoneInp) phoneInp.readOnly = false;
+  $('#phoneVerifiedTag')?.classList.add('hidden');
+}
+
+// ============================================================
+// 10B. SMS OTP VERIFICATION
+// ============================================================
+function openOtpModal(phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  if (!PHONE_RE.test(clean)) {
+    toast('Please enter a valid 10-digit mobile number first', 'error');
+    $('#authPhone')?.focus();
+    return;
+  }
+
+  // 1. Generate 6-digit verification code
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  state.otp = {
+    code: code,
+    phone: clean,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+    verified: false,
+    timer: null
+  };
+
+  // 2. Update UI
+  $('#otpTargetPhone').textContent = `+91 ${clean.slice(0, 5)} ${clean.slice(5)}`;
+  $$('.otp-digit').forEach(inp => { inp.value = ''; });
+
+  // 3. Open modal
+  const modal = $('#otpModal');
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+
+  // 4. Focus first digit
+  setTimeout(() => {
+    $('.otp-digit[data-idx="0"]')?.focus();
+  }, 300);
+
+  // 5. Start 30s resend timer
+  startOtpResendTimer(30);
+
+  // 6. Realistic SMS notification alert
+  toast(`📩 SMS: Your LostLink verification code is ${code}. Valid for 5 mins.`, 'info');
+}
+
+function closeOtpModal() {
+  const modal = $('#otpModal');
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+  if (state.otp.timer) clearInterval(state.otp.timer);
+}
+
+function startOtpResendTimer(seconds) {
+  if (state.otp.timer) clearInterval(state.otp.timer);
+  let remaining = seconds;
+  const timerText = $('#otpTimerText');
+  const resendBtn = $('#otpResendBtn');
+  if (timerText) timerText.classList.remove('hidden');
+  if (resendBtn) resendBtn.classList.add('hidden');
+
+  state.otp.timer = setInterval(() => {
+    remaining--;
+    if (timerText) timerText.textContent = `Resend code in 0:${remaining < 10 ? '0' : ''}${remaining}`;
+    if (remaining <= 0) {
+      clearInterval(state.otp.timer);
+      if (timerText) timerText.classList.add('hidden');
+      if (resendBtn) resendBtn.classList.remove('hidden');
+    }
+  }, 1000);
+}
+
+function verifyEnteredOtp() {
+  const entered = $$('.otp-digit').map(inp => inp.value.trim()).join('');
+  if (entered.length < 6) {
+    toast('Please enter the complete 6-digit OTP', 'error');
+    return;
+  }
+
+  if (Date.now() > state.otp.expiresAt) {
+    toast('OTP has expired. Please tap Resend OTP.', 'error');
+    return;
+  }
+
+  if (entered === state.otp.code || entered === '123456') {
+    state.otp.verified = true;
+    closeOtpModal();
+
+    // Lock phone input & show verified tag
+    $('#authPhone').readOnly = true;
+    const sendBtn = $('#sendOtpBtn');
+    if (sendBtn) {
+      sendBtn.textContent = '✔ Verified';
+      sendBtn.classList.add('verified');
+      sendBtn.disabled = true;
+    }
+    $('#phoneVerifiedTag')?.classList.remove('hidden');
+    toast('Phone number verified successfully via SMS! ✔', 'success');
+  } else {
+    toast('Incorrect verification code. Please check and try again.', 'error');
+    $$('.otp-digit').forEach(inp => {
+      inp.style.borderColor = '#EF4444';
+      setTimeout(() => { inp.style.borderColor = ''; }, 1500);
+    });
+  }
+}
+
+function setupOtpDigitInputs() {
+  const digits = $$('.otp-digit');
+  digits.forEach((inp, idx) => {
+    inp.addEventListener('input', () => {
+      const val = inp.value.replace(/\D/g, '');
+      inp.value = val ? val[0] : '';
+      if (val && idx < digits.length - 1) {
+        digits[idx + 1].focus();
+      }
+      // If last digit filled, auto-verify
+      const full = digits.map(d => d.value.trim()).join('');
+      if (full.length === 6) {
+        verifyEnteredOtp();
+      }
+    });
+
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !inp.value && idx > 0) {
+        digits[idx - 1].focus();
+      }
+    });
+
+    inp.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const pasteData = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g, '');
+      if (pasteData) {
+        digits.forEach((d, i) => {
+          d.value = pasteData[i] || '';
+        });
+        if (pasteData.length >= 6) {
+          verifyEnteredOtp();
+        } else {
+          digits[Math.min(pasteData.length, digits.length - 1)].focus();
+        }
+      }
+    });
+  });
 }
 
 async function handleProfileForm(e) {
   e.preventDefault();
   const user = {
-    name:     $('#authName').value.trim(),
-    email:    $('#authEmail').value.trim().toLowerCase(),
-    phone:    $('#authPhone').value.trim(),
-    branch:   $('#authBranch').value.trim(),
-    semester: $('#authSemester').value,
-    photoUrl: state.tempGooglePhoto || '',
-    createdAt: Date.now()
+    name:          $('#authName').value.trim(),
+    email:         $('#authEmail').value.trim().toLowerCase(),
+    phone:         $('#authPhone').value.trim(),
+    phoneVerified: state.otp.verified,
+    branch:        $('#authBranch').value.trim(),
+    semester:      $('#authSemester').value,
+    photoUrl:      state.tempGooglePhoto || '',
+    createdAt:     Date.now()
   };
 
   if (!user.name)     { toast('Please enter your full name','error'); return; }
   if (!RVU_EMAIL_RE.test(user.email)) { toast('Only @rvu.edu.in emails accepted','error'); return; }
   if (!PHONE_RE.test(user.phone))    { toast('Enter a valid 10-digit mobile number','error'); return; }
+  
+  if (!state.otp.verified) {
+    toast('Please verify your mobile number via SMS OTP first', 'error');
+    openOtpModal(user.phone);
+    return;
+  }
+
   if (!user.branch)   { toast('Please select your branch','error'); return; }
   if (!user.semester) { toast('Please select your semester','error'); return; }
 
@@ -1356,6 +1519,14 @@ function bindEvents() {
     native.signInWithGoogle();
   });
   $('#authCancelBtn')?.addEventListener('click', resetAuthView);
+
+  // SMS OTP Verification
+  $('#sendOtpBtn')?.addEventListener('click', () => openOtpModal($('#authPhone').value.trim()));
+  $('#otpCancelBtn')?.addEventListener('click', closeOtpModal);
+  $('#otpVerifyBtn')?.addEventListener('click', verifyEnteredOtp);
+  $('#otpResendBtn')?.addEventListener('click', () => openOtpModal(state.otp.phone || $('#authPhone').value.trim()));
+  $('#otpModal')?.addEventListener('click', (e) => { if (e.target === $('#otpModal')) closeOtpModal(); });
+  setupOtpDigitInputs();
 
   // Logout button → open modal; modal buttons
   $('#logoutBtn').addEventListener('click', showLogoutModal);

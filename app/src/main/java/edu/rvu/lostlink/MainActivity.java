@@ -236,7 +236,8 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Directly launches the native WhatsApp application with a pre-filled chat.
+     * Directly launches the native WhatsApp application with a pre-filled chat,
+     * bypassing the web landing page completely. Supports both WhatsApp and WhatsApp Business.
      */
     public void launchWhatsApp(String phone, String text) {
         try {
@@ -244,27 +245,43 @@ public final class MainActivity extends Activity {
             if (cleanPhone.length() == 10) cleanPhone = "91" + cleanPhone;
             String encodedText = text != null ? Uri.encode(text) : "";
 
-            // Universal API link specifically targeted to WhatsApp app package
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.setData(Uri.parse("https://api.whatsapp.com/send?phone=" + cleanPhone + "&text=" + encodedText));
-            intent.setPackage("com.whatsapp");
+            // 1. Direct native protocol (whatsapp://send) - jumps straight into chat without any browser page
+            Uri waUri = Uri.parse("whatsapp://send?phone=" + cleanPhone + "&text=" + encodedText);
+            Intent waIntent = new Intent(Intent.ACTION_VIEW, waUri);
+
+            // Target regular WhatsApp or WhatsApp Business if installed
+            if (isPackageInstalled("com.whatsapp")) {
+                waIntent.setPackage("com.whatsapp");
+            } else if (isPackageInstalled("com.whatsapp.w4b")) {
+                waIntent.setPackage("com.whatsapp.w4b");
+            }
+
             try {
-                startActivity(intent);
+                startActivity(waIntent);
                 return;
             } catch (Exception e1) {
-                // Try whatsapp:// scheme
+                // If package-specific launch fails, try universal whatsapp:// intent
                 try {
-                    Intent waScheme = new Intent(Intent.ACTION_VIEW, Uri.parse("whatsapp://send?phone=" + cleanPhone + "&text=" + encodedText));
-                    startActivity(waScheme);
+                    waIntent.setPackage(null);
+                    startActivity(waIntent);
                     return;
                 } catch (Exception e2) {
-                    // Fallback to any browser/handler
-                    intent.setPackage(null);
-                    startActivity(intent);
+                    // Fallback to api.whatsapp.com intent
+                    Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=" + cleanPhone + "&text=" + encodedText));
+                    startActivity(webIntent);
                 }
             }
         } catch (Exception e) {
             Toast.makeText(this, "Could not open WhatsApp: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private boolean isPackageInstalled(String packageName) {
+        try {
+            getPackageManager().getPackageInfo(packageName, 0);
+            return true;
+        } catch (Exception ignored) {
+            return false;
         }
     }
 

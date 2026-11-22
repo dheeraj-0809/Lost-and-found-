@@ -4,9 +4,10 @@
     <!-- Internet required for Google Sign-In and optional cloud sync -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Query packages to directly launch native WhatsApp, Google Maps, and Dialer -->
+    <!-- Query packages to directly launch native WhatsApp, WhatsApp Business, Google Maps, and Dialer -->
     <queries>
         <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
         <package android:name="com.google.android.apps.maps" />
         <intent>
             <action android:name="android.intent.action.DIAL" />
@@ -15,6 +16,10 @@
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="geo" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="whatsapp" />
         </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />

@@ -95,7 +95,13 @@
 
         <div class="form-field">
           <label class="form-label" for="authPhone">Mobile Number (For matched item handoff)</label>
-          <input class="form-input" id="authPhone" type="tel" required inputmode="numeric" maxlength="10" placeholder="10-digit mobile number">
+          <div class="phone-input-row">
+            <input class="form-input" id="authPhone" type="tel" required inputmode="numeric" maxlength="10" placeholder="10-digit mobile number" style="flex:1;">
+            <button type="button" id="sendOtpBtn" class="btn-otp-action">Verify via SMS</button>
+          </div>
+          <div id="phoneVerifiedTag" class="phone-verified-tag hidden">
+            <span>✔ Mobile number verified via SMS OTP</span>
+          </div>
         </div>
 
         <div class="form-row">
@@ -479,6 +485,34 @@
 
 <!-- Toast -->
 <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
+
+<!-- SMS OTP Verification Modal -->
+<div id="otpModal" class="modal-overlay" aria-modal="true" role="dialog" aria-hidden="true">
+  <div class="modal-card otp-card">
+    <div class="modal-icon">📲</div>
+    <div class="modal-title">Verify Phone Number</div>
+    <div class="modal-sub">Enter the 6-digit verification code sent via SMS to <br><strong id="otpTargetPhone">+91 XXXXX XXXXX</strong></div>
+    
+    <div class="otp-inputs-row" id="otpInputsRow">
+      <input type="text" class="otp-digit" maxlength="1" inputmode="numeric" data-idx="0" autocomplete="one-time-code">
+      <input type="text" class="otp-digit" maxlength="1" inputmode="numeric" data-idx="1">
+      <input type="text" class="otp-digit" maxlength="1" inputmode="numeric" data-idx="2">
+      <input type="text" class="otp-digit" maxlength="1" inputmode="numeric" data-idx="3">
+      <input type="text" class="otp-digit" maxlength="1" inputmode="numeric" data-idx="4">
+      <input type="text" class="otp-digit" maxlength="1" inputmode="numeric" data-idx="5">
+    </div>
+
+    <div class="otp-resend-row">
+      <span id="otpTimerText">Resend code in 0:30</span>
+      <button type="button" id="otpResendBtn" class="btn-resend-link hidden">Resend OTP</button>
+    </div>
+
+    <div class="modal-actions" style="margin-top:16px;">
+      <button type="button" class="modal-btn modal-btn-cancel" id="otpCancelBtn">Cancel</button>
+      <button type="button" class="modal-btn modal-btn-confirm" id="otpVerifyBtn">Verify &amp; Confirm ✔</button>
+    </div>
+  </div>
+</div>
 
 <!-- Logout Confirmation Modal -->
 <div id="logoutModal" class="modal-overlay" aria-modal="true" role="dialog" aria-hidden="true">
