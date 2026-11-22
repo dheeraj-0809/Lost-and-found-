@@ -15,6 +15,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.ProgressBar;
+import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -121,9 +122,15 @@ public final class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                final String scheme = request.getUrl().getScheme();
-                // Allow file:// and https:// navigation; intercept external http links
-                return !("file".equals(scheme) || "https".equals(scheme));
+                if (request != null && request.getUrl() != null) {
+                    return handleExternalUrl(request.getUrl().toString());
+                }
+                return false;
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handleExternalUrl(url);
             }
 
             @Override
@@ -143,6 +150,160 @@ public final class MainActivity extends Activity {
 
         // Load the app from assets
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    /**
+     * Intercepts URL requests to launch native external apps (WhatsApp, Maps, Dialer, etc.)
+     * instead of loading them within the restricted WebView.
+     */
+    public boolean handleExternalUrl(String url) {
+        if (url == null) return false;
+
+        // 1. Phone calls
+        if (url.startsWith("tel:")) {
+            launchDialer(url.substring(4));
+            return true;
+        }
+
+        // 2. WhatsApp
+        if (url.startsWith("whatsapp:") || url.contains("wa.me") || url.contains("api.whatsapp.com")) {
+            String phone = "";
+            String text = "";
+            try {
+                Uri parsed = Uri.parse(url);
+                if (url.contains("phone=")) {
+                    phone = parsed.getQueryParameter("phone");
+                } else if (url.contains("wa.me/")) {
+                    String path = parsed.getPath();
+                    if (path != null && path.length() > 1) {
+                        phone = path.substring(1);
+                    }
+                }
+                text = parsed.getQueryParameter("text");
+            } catch (Exception ignored) {}
+
+            launchWhatsApp(phone, text != null ? text : "");
+            return true;
+        }
+
+        // 3. Google Maps / Directions
+        if (url.startsWith("geo:") || url.contains("google.com/maps") || url.contains("maps.google")) {
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                intent.setPackage("com.google.android.apps.maps");
+                try {
+                    startActivity(intent);
+                    return true;
+                } catch (Exception ignored) {
+                    intent.setPackage(null);
+                    startActivity(intent);
+                    return true;
+                }
+            } catch (Exception e) {
+                Toast.makeText(this, "Could not open Maps: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                return true;
+            }
+        }
+
+        // 4. Email
+        if (url.startsWith("mailto:")) {
+            try {
+                Intent intent = new Intent(Intent.ACTION_SENDTO, Uri.parse(url));
+                startActivity(intent);
+                return true;
+            } catch (Exception ignored) {
+                return true;
+            }
+        }
+
+        // 5. Allow local asset files inside WebView
+        if (url.startsWith("file:///android_asset/")) {
+            return false;
+        }
+
+        // 6. External web links -> launch in external browser
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            try {
+                Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                startActivity(browserIntent);
+                return true;
+            } catch (Exception ignored) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Directly launches the native WhatsApp application with a pre-filled chat.
+     */
+    public void launchWhatsApp(String phone, String text) {
+        try {
+            String cleanPhone = phone == null ? "" : phone.replaceAll("[^0-9]", "");
+            if (cleanPhone.length() == 10) cleanPhone = "91" + cleanPhone;
+            String encodedText = text != null ? Uri.encode(text) : "";
+
+            // Universal API link specifically targeted to WhatsApp app package
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setData(Uri.parse("https://api.whatsapp.com/send?phone=" + cleanPhone + "&text=" + encodedText));
+            intent.setPackage("com.whatsapp");
+            try {
+                startActivity(intent);
+                return;
+            } catch (Exception e1) {
+                // Try whatsapp:// scheme
+                try {
+                    Intent waScheme = new Intent(Intent.ACTION_VIEW, Uri.parse("whatsapp://send?phone=" + cleanPhone + "&text=" + encodedText));
+                    startActivity(waScheme);
+                    return;
+                } catch (Exception e2) {
+                    // Fallback to any browser/handler
+                    intent.setPackage(null);
+                    startActivity(intent);
+                }
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open WhatsApp: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * Directly launches the native phone dialer with the target phone number.
+     */
+    public void launchDialer(String phone) {
+        try {
+            String cleanPhone = phone == null ? "" : phone.replaceAll("[^0-9+]", "");
+            if (!cleanPhone.startsWith("+") && cleanPhone.length() == 10) {
+                cleanPhone = "+91" + cleanPhone;
+            }
+            Intent intent = new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + cleanPhone));
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open phone dialer: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * Directly launches the Google Maps app pointing to target coordinates.
+     */
+    public void launchMaps(double lat, double lng, String label) {
+        try {
+            // geo URI opens the Google Maps application directly without web interstitial
+            Uri gmmIntentUri = Uri.parse("geo:" + lat + "," + lng + "?q=" + lat + "," + lng + "(" + Uri.encode(label) + ")");
+            Intent mapIntent = new Intent(Intent.ACTION_VIEW, gmmIntentUri);
+            mapIntent.setPackage("com.google.android.apps.maps");
+            try {
+                startActivity(mapIntent);
+                return;
+            } catch (Exception ignored) {
+                // Fallback to web directions in external browser
+                Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&destination=" + lat + "," + lng));
+                startActivity(webIntent);
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open Maps: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
     }
 
     // -------------------------------------------------------------------------

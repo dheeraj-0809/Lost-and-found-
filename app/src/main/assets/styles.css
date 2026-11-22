@@ -1645,6 +1645,9 @@ ul, ol { list-style: none; }
   text-decoration: none;
   transition: all var(--t-fast);
   border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  outline: none;
 }
 .btn-notif-action:active { transform: scale(0.96); }
 .btn-wa {

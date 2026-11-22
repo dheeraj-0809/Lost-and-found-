@@ -62,4 +62,19 @@ public final class WebAppBridge {
         activity.runOnUiThread(activity::openGoogleSignIn);
     }
 
+    @JavascriptInterface
+    public void openWhatsApp(String phone, String text) {
+        activity.runOnUiThread(() -> activity.launchWhatsApp(phone, text));
+    }
+
+    @JavascriptInterface
+    public void callPhone(String phone) {
+        activity.runOnUiThread(() -> activity.launchDialer(phone));
+    }
+
+    @JavascriptInterface
+    public void openMaps(double lat, double lng, String label) {
+        activity.runOnUiThread(() -> activity.launchMaps(lat, lng, label));
+    }
+
 }
