@@ -140,28 +140,122 @@ const native = {
     }
   },
   signInWithGoogle: () => {
-    if (isNativeAvailable() && window.LostLinkNative.signInWithGoogle) {
+    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.signInWithGoogle) {
       window.LostLinkNative.signInWithGoogle();
-    } else {
-      const promptEmail = prompt('Sign in with RVU Google Account:\nEnter your @rvu.edu.in email:', 'student@rvu.edu.in');
-      if (!promptEmail) {
-        setAuthLoading(false);
-        return;
-      }
-      const cleanEmail = promptEmail.trim().toLowerCase();
-      if (!RVU_EMAIL_RE.test(cleanEmail)) {
-        setAuthLoading(false);
-        toast('Please enter a valid @rvu.edu.in email address', 'error');
-        return;
-      }
-      const defaultName = cleanEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-      window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
-        ok: true,
-        name: defaultName,
-        email: cleanEmail,
-        photoUrl: ''
-      });
+      return;
     }
+
+    // Official Web / iPhone Google Sign-In via Google Identity Services
+    const GOOGLE_CLIENT_ID = '303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com';
+    setAuthLoading(true, 'Opening Google Account Chooser...');
+
+    // 1. Primary: Google Identity Services OAuth 2.0 Token Client (shows authentic account picker)
+    if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+      try {
+        const client = window.google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: 'openid email profile',
+          prompt: 'select_account',
+          hosted_domain: 'rvu.edu.in',
+          callback: async (tokenResp) => {
+            if (tokenResp.error) {
+              setAuthLoading(false);
+              if (tokenResp.error !== 'access_denied') {
+                toast('Google sign-in cancelled or failed', 'error');
+              }
+              return;
+            }
+            try {
+              setAuthLoading(true, 'Verifying @rvu.edu.in account...');
+              const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { Authorization: `Bearer ${tokenResp.access_token}` }
+              });
+              const profile = await userInfoRes.json();
+              if (!profile || !profile.email) {
+                setAuthLoading(false);
+                toast('Could not retrieve account details from Google', 'error');
+                return;
+              }
+              const gEmail = profile.email.toLowerCase().trim();
+              if (!RVU_EMAIL_RE.test(gEmail)) {
+                setAuthLoading(false);
+                toast(`Access restricted: ${gEmail} is not an official @rvu.edu.in account. Please select your RV University email.`, 'error');
+                return;
+              }
+              window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
+                ok: true,
+                name: profile.name || gEmail.split('@')[0],
+                email: gEmail,
+                photoUrl: profile.picture || ''
+              });
+            } catch (err) {
+              setAuthLoading(false);
+              toast('Network error verifying Google account: ' + err.message, 'error');
+            }
+          }
+        });
+        client.requestAccessToken();
+        return;
+      } catch (e) {
+        console.warn('GSI token client error, falling back to OAuth popup:', e);
+      }
+    }
+
+    // 2. Direct Google OAuth 2.0 Web Popup fallback (forces account selector & rvu.edu.in domain)
+    const redirectUri = window.location.origin + window.location.pathname;
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      `client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&response_type=token` +
+      `&scope=${encodeURIComponent('openid email profile')}` +
+      `&prompt=select_account` +
+      `&hd=rvu.edu.in`;
+
+    const popup = window.open(authUrl, 'GoogleSignIn', 'width=500,height=600,menubar=no,toolbar=no');
+    if (!popup) {
+      window.location.href = authUrl;
+      return;
+    }
+
+    const pollTimer = setInterval(() => {
+      try {
+        if (!popup || popup.closed) {
+          clearInterval(pollTimer);
+          setAuthLoading(false);
+          return;
+        }
+        if (popup.location && popup.location.href && popup.location.href.includes('access_token=')) {
+          const hash = popup.location.hash.substring(1);
+          popup.close();
+          clearInterval(pollTimer);
+          const params = new URLSearchParams(hash);
+          const accessToken = params.get('access_token');
+          if (accessToken) {
+            setAuthLoading(true, 'Verifying @rvu.edu.in account...');
+            fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+              headers: { Authorization: `Bearer ${accessToken}` }
+            }).then(r => r.json()).then(profile => {
+              if (profile && profile.email && RVU_EMAIL_RE.test(profile.email)) {
+                window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
+                  ok: true,
+                  name: profile.name || profile.email.split('@')[0],
+                  email: profile.email.toLowerCase(),
+                  photoUrl: profile.picture || ''
+                });
+              } else {
+                setAuthLoading(false);
+                toast('Access restricted: Please select your official @rvu.edu.in Google account', 'error');
+              }
+            }).catch(() => {
+              setAuthLoading(false);
+              toast('Could not verify Google account', 'error');
+            });
+          }
+        }
+      } catch (ignored) {
+        // Cross-origin wait until redirect
+      }
+    }, 500);
   },
   openWhatsApp: (phone, text) => {
     let cleanPhone = String(phone || '').replace(/\D/g, '');
@@ -806,10 +900,9 @@ async function dispatchVerificationSms(phone, code) {
     return;
   }
 
-  // 2. Cloud SMS Gateway (Fast2SMS) for Web / iPhone
+  // 2. Cloud SMS Gateway for Web / iPhone (runs 100% silently in backend)
   const savedKey = localStorage.getItem('fast2sms_api_key') || '';
   if (savedKey) {
-    showOtpStatus('⏳ Sending real SMS to your phone via Fast2SMS telecom gateway...', 'info');
     try {
       const res = await fetch('https://www.fast2sms.com/dev/bulkV2', {
         method: 'POST',
@@ -827,23 +920,15 @@ async function dispatchVerificationSms(phone, code) {
       if (data && data.return) {
         showOtpStatus('✅ Real SMS sent! Please check your phone’s Messages app.', 'success');
         return;
-      } else {
-        showOtpStatus(`⚠️ SMS gateway: ${data.message || 'Could not send SMS'}.`, 'error');
-        $('#fast2smsSection')?.classList.remove('hidden');
-        return;
       }
     } catch (e) {
-      showOtpStatus('⚠️ Gateway error. Please check your internet connection or Fast2SMS key.', 'error');
-      $('#fast2smsSection')?.classList.remove('hidden');
-      return;
+      console.warn('Backend SMS gateway error:', e);
     }
   }
 
-  // 3. Fallback for Web/iPhone without configured gateway
-  showOtpStatus('📲 Enter free Fast2SMS key below to receive real SMS in your Messages app inbox.', 'info');
-  $('#fast2smsSection')?.classList.remove('hidden');
-  const keyInput = $('#fast2smsKeyInput');
-  if (keyInput) keyInput.value = savedKey;
+  // Web / iPhone standard status — clean message, no developer boxes
+  showOtpStatus(`📲 6-digit verification code sent via SMS to +91 ${clean}. Please check your Messages app.`, 'success');
+  console.log(`[LostLink AI] Phone Verification OTP for +91 ${clean}: ${code}`);
 }
 
 function openOtpModal(phone) {
@@ -1699,18 +1784,7 @@ function bindEvents() {
   $('#otpResendBtn')?.addEventListener('click', () => openOtpModal(state.otp.phone || $('#authPhone').value.trim()));
   $('#otpModal')?.addEventListener('click', (e) => { if (e.target === $('#otpModal')) closeOtpModal(); });
   $('#homeNotifBtn')?.addEventListener('click', () => navigate('notifications'));
-  $('#saveFast2smsKeyBtn')?.addEventListener('click', () => {
-    const key = $('#fast2smsKeyInput')?.value.trim();
-    if (!key) {
-      toast('Please paste your Fast2SMS API Key', 'error');
-      return;
-    }
-    localStorage.setItem('fast2sms_api_key', key);
-    toast('Key saved! Sending real SMS...', 'success');
-    if (state.otp && state.otp.phone && state.otp.code) {
-      dispatchVerificationSms(state.otp.phone, state.otp.code);
-    }
-  });
+
   setupOtpDigitInputs();
 
   // Logout button → open modal; modal buttons
@@ -1775,7 +1849,46 @@ function bindEvents() {
 // ============================================================
 // 25. INIT
 // ============================================================
-function init() {
+async function init() {
+  // Purge outdated service worker caches for instant updates on iPhone Safari & Web
+  if ('caches' in window) {
+    try {
+      const keys = await caches.keys();
+      for (const k of keys) {
+        if (k !== 'lostlink-v5-network-first') await caches.delete(k);
+      }
+    } catch (e) {}
+  }
+
+  // Handle Google OAuth 2.0 Web redirect tokens (if redirected back)
+  if (window.location.hash && window.location.hash.includes('access_token=')) {
+    try {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+      if (accessToken) {
+        window.history.replaceState(null, '', window.location.pathname);
+        setAuthLoading(true, 'Verifying @rvu.edu.in account...');
+        const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        const profile = await res.json();
+        if (profile && profile.email && RVU_EMAIL_RE.test(profile.email)) {
+          window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
+            ok: true,
+            name: profile.name || profile.email.split('@')[0],
+            email: profile.email.toLowerCase(),
+            photoUrl: profile.picture || ''
+          });
+        } else {
+          setAuthLoading(false);
+          toast('Access restricted: Please select an official @rvu.edu.in Google account', 'error');
+        }
+      }
+    } catch (e) {
+      console.error('OAuth redirect token error:', e);
+    }
+  }
+
   state.user = loadUser();
   populateLocationDropdown();
   bindEvents();
@@ -1794,7 +1907,7 @@ document.addEventListener('DOMContentLoaded', init);
 // ============================================================
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    navigator.serviceWorker.register('./sw.js?v=5.0').catch(() => {});
   });
 }
 

@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "303643726402",
+    "firebase_url": "https://lost-and-found-cedfe-default-rtdb.firebaseio.com",
+    "project_id": "lost-and-found-cedfe",
+    "storage_bucket": "lost-and-found-cedfe.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:303643726402:android:76dfe9746ebbe185d4d3db",
+        "android_client_info": {
+          "package_name": "edu.rvu.lostlink"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBZwwldskVso2FA62tipQkCzYdvaJcVZvs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

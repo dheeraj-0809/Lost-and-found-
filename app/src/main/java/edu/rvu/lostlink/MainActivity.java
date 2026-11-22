@@ -75,8 +75,10 @@ public final class MainActivity extends Activity {
 
         googleClient = GoogleSignIn.getClient(this,
                 new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                        .requestIdToken("303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com")
                         .requestEmail()
                         .requestProfile()
+                        .setHostedDomain("rvu.edu.in")
                         .build());
 
         configureWebView();
@@ -270,7 +272,7 @@ public final class MainActivity extends Activity {
                 startActivity(waIntent);
                 return;
             } catch (Exception e1) {
-                // If package targeting failed, launch without package so Android system resolver picks WhatsApp
+                // Try without package targeting so Android resolver picks WhatsApp or any clone
                 try {
                     Intent genericIntent = new Intent(Intent.ACTION_VIEW, waUri);
                     genericIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -291,7 +293,7 @@ public final class MainActivity extends Activity {
                 return;
             } catch (Exception ignored) {}
 
-            // Last resort: Browser wa.me
+            // Last resort: Browser wa.me only if WhatsApp app is not installed at all
             Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/" + cleanPhone + "?text=" + encodedText));
             webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(webIntent);
@@ -401,6 +403,7 @@ public final class MainActivity extends Activity {
                 cleanPhone = "+91" + cleanPhone;
             }
             Intent intent = new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + cleanPhone));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(intent);
         } catch (Exception e) {
             Toast.makeText(this, "Could not open phone dialer: " + e.getMessage(), Toast.LENGTH_SHORT).show();
@@ -415,15 +418,27 @@ public final class MainActivity extends Activity {
             // geo URI opens the Google Maps application directly without web interstitial
             Uri gmmIntentUri = Uri.parse("geo:" + lat + "," + lng + "?q=" + lat + "," + lng + "(" + Uri.encode(label) + ")");
             Intent mapIntent = new Intent(Intent.ACTION_VIEW, gmmIntentUri);
-            mapIntent.setPackage("com.google.android.apps.maps");
+            mapIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (isPackageInstalled("com.google.android.apps.maps")) {
+                mapIntent.setPackage("com.google.android.apps.maps");
+            }
             try {
                 startActivity(mapIntent);
                 return;
             } catch (Exception ignored) {
-                // Fallback to web directions in external browser
-                Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&destination=" + lat + "," + lng));
-                startActivity(webIntent);
+                // Try system resolver for geo URI
+                try {
+                    Intent genericGeo = new Intent(Intent.ACTION_VIEW, gmmIntentUri);
+                    genericGeo.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(genericGeo);
+                    return;
+                } catch (Exception ignored2) {}
             }
+
+            // Fallback to web directions in external browser
+            Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/?api=1&query=" + lat + "," + lng));
+            webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(webIntent);
         } catch (Exception e) {
             Toast.makeText(this, "Could not open Maps: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }

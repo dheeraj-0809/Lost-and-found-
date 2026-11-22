@@ -39,7 +39,7 @@ def get_local_ip():
 LOCAL_IP = get_local_ip()
 
 # --- Universal Cloud URLs (Global HTTPS CDN — 100% works on iPhone Safari & Android Chrome) ---
-CLOUD_WEB_URL = "https://raw.githack.com/dheeraj-0809/Lost-and-found-/main/docs/index.html"
+CLOUD_WEB_URL = "https://dheeraj-0809.github.io/Lost-and-found-/"
 GITHUB_PAGES_URL = "https://dheeraj-0809.github.io/Lost-and-found-/"
 CLOUD_APK_URL = "https://github.com/dheeraj-0809/Lost-and-found-/raw/main/LostLink-AI.apk"
 

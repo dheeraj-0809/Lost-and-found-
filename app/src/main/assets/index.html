@@ -12,7 +12,12 @@
   <meta name="apple-mobile-web-app-title" content="LostLink AI">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="styles.css">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <link rel="stylesheet" href="styles.css?v=5.0">
+  <!-- Google Identity Services for official campus Google SSO -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
@@ -526,17 +531,7 @@
       <button type="button" id="otpResendBtn" class="btn-resend-link hidden">Resend OTP</button>
     </div>
 
-    <!-- Free Cloud SMS Gateway (Fast2SMS) for Web / iPhone -->
-    <div id="fast2smsSection" class="fast2sms-section hidden">
-      <div class="fast2sms-title">🔑 Free Real SMS Gateway (Fast2SMS)</div>
-      <div class="fast2sms-sub">Receive real OTP SMS directly in your phone's Messages app. Enter free API key from <a href="https://www.fast2sms.com" target="_blank" rel="noopener">fast2sms.com</a>:</div>
-      <div class="fast2sms-input-row">
-        <input type="text" id="fast2smsKeyInput" placeholder="Paste free Fast2SMS API Key" class="fast2sms-input">
-        <button type="button" id="saveFast2smsKeyBtn" class="btn-fast2sms-save">Save &amp; Send</button>
-      </div>
-    </div>
-
-    <div class="modal-actions" style="margin-top:16px;">
+    <div class="modal-actions" style="margin-top:20px;">
       <button type="button" class="modal-btn modal-btn-cancel" id="otpCancelBtn">Cancel</button>
       <button type="button" class="modal-btn modal-btn-confirm" id="otpVerifyBtn">Verify &amp; Confirm ✔</button>
     </div>
@@ -581,6 +576,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=5.0"></script>
 </body>
 </html>

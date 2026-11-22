@@ -607,58 +607,7 @@ ul, ol { list-style: none; }
   border: 1px solid rgba(239, 68, 68, 0.28);
 }
 
-.fast2sms-section {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px dashed rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
-  padding: 10px 12px;
-  margin: 12px 0 6px;
-  text-align: left;
-}
-.fast2sms-title {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: #F8FAFC;
-  margin-bottom: 2px;
-}
-.fast2sms-sub {
-  font-size: 10.5px;
-  color: var(--text-4);
-  line-height: 1.35;
-  margin-bottom: 8px;
-}
-.fast2sms-sub a {
-  color: #60A5FA;
-  text-decoration: underline;
-}
-.fast2sms-input-row {
-  display: flex;
-  gap: 6px;
-}
-.fast2sms-input {
-  flex: 1;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  color: #FFF;
-  font-size: 11px;
-  padding: 6px 8px;
-  outline: none;
-}
-.fast2sms-input:focus {
-  border-color: #3B82F6;
-}
-.btn-fast2sms-save {
-  background: #2563EB;
-  color: #FFF;
-  border: none;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 6px 10px;
-  cursor: pointer;
-  white-space: nowrap;
-}
+
 
 /* ============================================
    4. APP SHELL
