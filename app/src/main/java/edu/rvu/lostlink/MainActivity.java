@@ -477,12 +477,15 @@ public final class MainActivity extends Activity {
     }
 
     public void openGoogleSignIn() {
+        String nonce = Long.toHexString(System.currentTimeMillis()) + Long.toHexString(Double.doubleToLongBits(Math.random()));
         String authUrl = "https://accounts.google.com/o/oauth2/v2/auth?" +
                 "client_id=303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com" +
                 "&redirect_uri=" + Uri.encode("https://dheeraj-0809.github.io/Lost-and-found-/") +
                 "&response_type=token" +
-                "&scope=" + Uri.encode("openid email profile") +
+                "&scope=" + Uri.encode("email profile") +
+                "&nonce=" + Uri.encode(nonce) +
                 "&prompt=select_account" +
+                "&include_granted_scopes=true" +
                 "&hd=rvu.edu.in";
         try {
             openWebAuth(authUrl);
