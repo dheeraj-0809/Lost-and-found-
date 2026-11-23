@@ -63,6 +63,11 @@ public final class WebAppBridge {
     }
 
     @JavascriptInterface
+    public void openWebAuth(String url) {
+        activity.runOnUiThread(() -> activity.openWebAuth(url));
+    }
+
+    @JavascriptInterface
     public void openWhatsApp(String phone, String text) {
         activity.runOnUiThread(() -> activity.launchWhatsApp(phone, text));
     }

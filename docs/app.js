@@ -140,69 +140,14 @@ const native = {
     }
   },
   signInWithGoogle: () => {
-    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.signInWithGoogle) {
-      window.LostLinkNative.signInWithGoogle();
-      return;
-    }
-
-    // Official Web / iPhone Google Sign-In via Google Identity Services
     const GOOGLE_CLIENT_ID = '303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com';
     setAuthLoading(true, 'Opening Google Account Chooser...');
 
-    // 1. Primary: Google Identity Services OAuth 2.0 Token Client (shows authentic account picker)
-    if (window.google && window.google.accounts && window.google.accounts.oauth2) {
-      try {
-        const client = window.google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID,
-          scope: 'openid email profile',
-          prompt: 'select_account',
-          hosted_domain: 'rvu.edu.in',
-          callback: async (tokenResp) => {
-            if (tokenResp.error) {
-              setAuthLoading(false);
-              if (tokenResp.error !== 'access_denied') {
-                toast('Google sign-in cancelled or failed', 'error');
-              }
-              return;
-            }
-            try {
-              setAuthLoading(true, 'Verifying @rvu.edu.in account...');
-              const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                headers: { Authorization: `Bearer ${tokenResp.access_token}` }
-              });
-              const profile = await userInfoRes.json();
-              if (!profile || !profile.email) {
-                setAuthLoading(false);
-                toast('Could not retrieve account details from Google', 'error');
-                return;
-              }
-              const gEmail = profile.email.toLowerCase().trim();
-              if (!RVU_EMAIL_RE.test(gEmail)) {
-                setAuthLoading(false);
-                toast(`Access restricted: ${gEmail} is not an official @rvu.edu.in account. Please select your RV University email.`, 'error');
-                return;
-              }
-              window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
-                ok: true,
-                name: profile.name || gEmail.split('@')[0],
-                email: gEmail,
-                photoUrl: profile.picture || ''
-              });
-            } catch (err) {
-              setAuthLoading(false);
-              toast('Network error verifying Google account: ' + err.message, 'error');
-            }
-          }
-        });
-        client.requestAccessToken();
-        return;
-      } catch (e) {
-        console.warn('GSI token client error, falling back to OAuth popup:', e);
-      }
-    }
+    const isLocal = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1');
+    const redirectUri = isLocal
+      ? window.location.origin + window.location.pathname
+      : 'https://dheeraj-0809.github.io/Lost-and-found-/';
 
-    // 2. Direct Google OAuth 2.0 Web Popup fallback (forces account selector & rvu.edu.in domain)
-    const redirectUri = window.location.origin + window.location.pathname;
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
@@ -211,51 +156,16 @@ const native = {
       `&prompt=select_account` +
       `&hd=rvu.edu.in`;
 
-    const popup = window.open(authUrl, 'GoogleSignIn', 'width=500,height=600,menubar=no,toolbar=no');
-    if (!popup) {
-      window.location.href = authUrl;
+    // 1. If running inside Android Native APK, launch authentic Google web auth in system browser
+    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.openWebAuth) {
+      window.LostLinkNative.openWebAuth(authUrl);
+      setTimeout(() => setAuthLoading(false), 2000);
       return;
     }
 
-    const pollTimer = setInterval(() => {
-      try {
-        if (!popup || popup.closed) {
-          clearInterval(pollTimer);
-          setAuthLoading(false);
-          return;
-        }
-        if (popup.location && popup.location.href && popup.location.href.includes('access_token=')) {
-          const hash = popup.location.hash.substring(1);
-          popup.close();
-          clearInterval(pollTimer);
-          const params = new URLSearchParams(hash);
-          const accessToken = params.get('access_token');
-          if (accessToken) {
-            setAuthLoading(true, 'Verifying @rvu.edu.in account...');
-            fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-              headers: { Authorization: `Bearer ${accessToken}` }
-            }).then(r => r.json()).then(profile => {
-              if (profile && profile.email && RVU_EMAIL_RE.test(profile.email)) {
-                window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
-                  ok: true,
-                  name: profile.name || profile.email.split('@')[0],
-                  email: profile.email.toLowerCase(),
-                  photoUrl: profile.picture || ''
-                });
-              } else {
-                setAuthLoading(false);
-                toast('Access restricted: Please select your official @rvu.edu.in Google account', 'error');
-              }
-            }).catch(() => {
-              setAuthLoading(false);
-              toast('Could not verify Google account', 'error');
-            });
-          }
-        }
-      } catch (ignored) {
-        // Cross-origin wait until redirect
-      }
-    }, 500);
+    // 2. Direct full-page navigation on all mobile and desktop browsers:
+    // 100% reliable on both Android (Chrome) and iPhone (Safari), never blocked by popup blockers!
+    window.location.href = authUrl;
   },
   openWhatsApp: (phone, text) => {
     let cleanPhone = String(phone || '').replace(/\D/g, '');

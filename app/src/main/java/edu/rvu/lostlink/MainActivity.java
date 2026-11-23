@@ -462,20 +462,28 @@ public final class MainActivity extends Activity {
      * picker. Signing out first forces the user to actively choose an account
      * on every sign-in attempt (campus security requirement).
      */
+    public void openWebAuth(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open browser: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
     public void openGoogleSignIn() {
+        String authUrl = "https://accounts.google.com/o/oauth2/v2/auth?" +
+                "client_id=303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com" +
+                "&redirect_uri=" + Uri.encode("https://dheeraj-0809.github.io/Lost-and-found-/") +
+                "&response_type=token" +
+                "&scope=" + Uri.encode("openid email profile") +
+                "&prompt=select_account" +
+                "&hd=rvu.edu.in";
         try {
-            googleClient.signOut();
-        } catch (Exception ignored) {}
-        try {
-            startActivityForResult(googleClient.getSignInIntent(), RC_GOOGLE_SIGN);
+            openWebAuth(authUrl);
         } catch (Exception e) {
             Toast.makeText(this, "Could not open Google Sign-in: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-            final JSONObject payload = new JSONObject();
-            try {
-                payload.put("ok", false);
-                payload.put("message", e.getMessage());
-            } catch (Exception ignored) {}
-            evaluateJs("window.onNativeGoogleSignIn(" + payload + ")");
         }
     }
 
