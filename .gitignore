@@ -21,6 +21,12 @@ local.properties
 .DS_Store
 Thumbs.db
 
+# Node modules & secrets
+node_modules/
+otp-server/node_modules/
+.env
+otp-server/.env
+
 # Backup files
 *.bak
 *.backup
