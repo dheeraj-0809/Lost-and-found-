@@ -105,10 +105,10 @@
           <label class="form-label" for="authPhone">Mobile Number (For matched item handoff)</label>
           <div class="phone-input-row">
             <input class="form-input" id="authPhone" type="tel" required inputmode="numeric" maxlength="10" placeholder="10-digit mobile number" style="flex:1;">
-            <button type="button" id="sendOtpBtn" class="btn-otp-action">Verify via SMS</button>
+            <button type="button" id="sendOtpBtn" class="btn-otp-action">Verify Mobile</button>
           </div>
           <div id="phoneVerifiedTag" class="phone-verified-tag hidden">
-            <span>✔ Mobile number verified via SMS OTP</span>
+            <span>✔ Mobile number verified</span>
           </div>
         </div>
 
@@ -511,23 +511,25 @@
 <!-- Toast -->
 <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
 
-<!-- SMS OTP Verification Modal -->
+<!-- Phone Verification Modal -->
 <div id="otpModal" class="modal-overlay" aria-modal="true" role="dialog" aria-hidden="true">
   <div class="modal-card otp-card">
     <div class="modal-icon">📲</div>
-    <div class="modal-title">Verify Phone Number</div>
-    <div class="modal-sub">Enter the 6-digit verification code sent via SMS to <br><strong id="otpTargetPhone">+91 XXXXX XXXXX</strong></div>
+    <div class="modal-title">Verify Device Mobile Number</div>
+    <div class="modal-sub">Enter the 6-digit verification code below for <br><strong id="otpTargetPhone">+91 XXXXX XXXXX</strong></div>
     
     <div id="otpSmsStatus" class="otp-sms-status hidden"></div>
     <div id="recaptcha-container"></div>
 
-    <div id="otpCodeDisplayBox" style="background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.35); border-radius: 12px; padding: 12px 14px; margin: 12px 0 16px; text-align: center;">
-      <div style="font-size: 11px; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 4px;">Campus SMS Verification Code</div>
-      <div style="display: flex; align-items: center; justify-content: center; gap: 12px; margin: 6px 0;">
-        <span id="otpCodeNumber" style="font-size: 24px; font-weight: 900; letter-spacing: 6px; color: #60A5FA; font-family: monospace;">------</span>
+    <div id="otpCodeDisplayBox" style="background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.35); border-radius: 12px; padding: 14px 16px; margin: 12px 0 16px; text-align: center;">
+      <div style="font-size: 11px; color: #38BDF8; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 4px;">Device Verification Code (Valid for 30s)</div>
+      <div style="display: flex; align-items: center; justify-content: center; gap: 12px; margin: 8px 0;">
+        <span id="otpCodeNumber" style="font-size: 26px; font-weight: 900; letter-spacing: 6px; color: #60A5FA; font-family: monospace;">------</span>
         <button type="button" id="otpDirectAutoFillBtn" style="background: #2563EB; color: #FFF; border: none; border-radius: 8px; padding: 6px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">⚡ Auto-Fill</button>
       </div>
-      <div style="font-size: 10.5px; color: #94A3B8; margin-top: 4px;">Tap <strong>Auto-Fill</strong> or enter the 6 digits to verify instantly.</div>
+      <div id="otpCountdownDisplay" style="font-size: 12px; font-weight: 700; color: #F59E0B; margin-top: 4px;">⏱️ Code expires in: <span id="otpSecondsLeft">30</span>s</div>
+      <div id="otpExpiryNotice" class="hidden" style="font-size: 11.5px; font-weight: 700; color: #EF4444; margin-top: 4px;">⚠️ Code expired. Tap Resend Code below.</div>
+      <div style="font-size: 10.5px; color: #94A3B8; margin-top: 6px;">Type the 6-digit code into the boxes below or tap Auto-Fill.</div>
     </div>
 
     <div class="otp-inputs-row" id="otpInputsRow">
@@ -541,8 +543,7 @@
 
     <div class="otp-resend-row">
       <span id="otpTimerText">Resend code in 0:30</span>
-      <button type="button" id="otpResendBtn" class="btn-resend-link hidden">Resend OTP</button>
-      <button type="button" id="otpQuickFillBtn" class="btn-resend-link hidden" style="color:#60A5FA; margin-left:8px; font-weight:700;">Tap to Auto-fill</button>
+      <button type="button" id="otpResendBtn" class="btn-resend-link hidden">Resend Code</button>
     </div>
 
     <div class="modal-actions" style="margin-top:20px;">

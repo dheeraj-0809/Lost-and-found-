@@ -775,7 +775,7 @@ function resetAuthView() {
   state.otp = { code: null, phone: null, expiresAt: 0, verified: false, timer: null };
   const sendBtn = $('#sendOtpBtn');
   if (sendBtn) {
-    sendBtn.textContent = 'Verify via SMS';
+    sendBtn.textContent = 'Verify Mobile';
     sendBtn.classList.remove('verified');
     sendBtn.disabled = false;
   }
@@ -785,7 +785,7 @@ function resetAuthView() {
 }
 
 // ============================================================
-// 10B. SMS OTP VERIFICATION
+// 10B. DEVICE PHONE OTP VERIFICATION (30-SECOND TIMER)
 // ============================================================
 function showOtpStatus(msg, type = 'info') {
   const el = $('#otpSmsStatus');
@@ -795,103 +795,88 @@ function showOtpStatus(msg, type = 'info') {
   el.classList.remove('hidden');
 }
 
-const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyBZwwldskVso2FA62tipQkCzYdvaJcVZvs",
-  authDomain: "lost-and-found-cedfe.firebaseapp.com",
-  databaseURL: "https://lost-and-found-cedfe-default-rtdb.firebaseio.com",
-  projectId: "lost-and-found-cedfe",
-  storageBucket: "lost-and-found-cedfe.firebasestorage.app",
-  messagingSenderId: "303643726402",
-  appId: "1:303643726402:android:76dfe9746ebbe185d4d3db"
-};
-
-function initFirebaseAuth() {
-  if (typeof firebase !== 'undefined' && !firebase.apps.length) {
+function getDevicePhoneNumber() {
+  // 1. Check native Android bridge
+  if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.getDevicePhoneNumber) {
     try {
-      firebase.initializeApp(FIREBASE_CONFIG);
-    } catch (e) {
-      console.warn('Firebase init error:', e);
-    }
+      const p = window.LostLinkNative.getDevicePhoneNumber();
+      if (p && p.length === 10) return p;
+    } catch (e) {}
   }
+  // 2. Check localStorage
+  const stored = localStorage.getItem('lostlink_device_phone');
+  if (stored && stored.length === 10) return stored;
+
+  // 3. Bound mobile number for this device
+  return '9032027202';
 }
 
-const OTP_SERVER_URL = window.LOSTLINK_OTP_SERVER || 'http://localhost:5000';
+function isDevicePhoneNumber(phone) {
+  let clean = String(phone || '').replace(/\D/g, '');
+  if (clean.length === 12 && clean.startsWith('91')) clean = clean.slice(2);
+  if (clean.startsWith('0') && clean.length === 11) clean = clean.slice(1);
 
-async function dispatchVerificationSms(phone, code) {
-  const clean = String(phone || '').replace(/\D/g, '');
-  showOtpStatus('⏳ Dispatching SMS to your phone...', 'info');
-
-  // 1. Check Dedicated LostLink OTP Backend Server (if running locally or cloud)
-  try {
-    const res = await fetch(`${OTP_SERVER_URL}/api/send-otp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: clean })
-    });
-    const data = await res.json();
-    if (data.ok) {
-      if (data.code) state.otp.code = data.code;
-      showOtpStatus(`📩 Verification code sent via SMS to +91 ${clean}! Please check your Messages app.`, 'success');
-      return;
-    }
-  } catch (serverErr) {
-    console.log('OTP server not detected on localhost:5000, checking Firebase Telecom Gateway...');
-  }
-
-  // 2. Google Firebase Telecom Carrier Gateway (sends real incoming SMS to Messages app)
-  if (typeof firebase !== 'undefined' && firebase.auth) {
+  if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.isDevicePhoneNumber) {
     try {
-      initFirebaseAuth();
-      if (!window.recaptchaVerifier) {
-        window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
-          size: 'invisible'
-        });
-      }
-      const confirmationResult = await firebase.auth().signInWithPhoneNumber('+91' + clean, window.recaptchaVerifier);
-      window.confirmationResult = confirmationResult;
-      showOtpStatus(`✅ Real Google SMS sent to +91 ${clean}! Please check your Messages app inbox.`, 'success');
-      return;
-    } catch (fbErr) {
-      console.warn('Firebase Phone Auth attempt:', fbErr);
-      if (window.recaptchaVerifier) {
-        try { window.recaptchaVerifier.clear(); } catch (_) {}
-        window.recaptchaVerifier = null;
-      }
-    }
+      return window.LostLinkNative.isDevicePhoneNumber(clean);
+    } catch (e) {}
   }
-
-  // 3. Fallback: Prompt user to check messages
-  showOtpStatus(`📩 Verification code dispatched to +91 ${clean}. Please check your Messages app.`, 'success');
+  return clean === getDevicePhoneNumber();
 }
 
 function openOtpModal(phone) {
-  const clean = String(phone || '').replace(/\D/g, '');
+  let clean = String(phone || '').replace(/\D/g, '');
+  if (clean.length === 12 && clean.startsWith('91')) clean = clean.slice(2);
+  if (clean.startsWith('0') && clean.length === 11) clean = clean.slice(1);
+
+  // 1. Validate 10-digit mobile number
   if (!PHONE_RE.test(clean)) {
     toast('Please enter a valid 10-digit mobile number first', 'error');
     $('#authPhone')?.focus();
     return;
   }
 
-  // 1. Generate 6-digit verification code
+  // 2. Validate that the number belongs to this device
+  if (!isDevicePhoneNumber(clean)) {
+    toast('Please enter the mobile number of this device', 'error');
+    $('#authPhone')?.focus();
+    return;
+  }
+
+  // 3. Generate 6-digit verification code valid for exactly 30 seconds
   const code = String(Math.floor(100000 + Math.random() * 900000));
   state.otp = {
     code: code,
     phone: clean,
-    expiresAt: Date.now() + 5 * 60 * 1000,
+    expiresAt: Date.now() + 30 * 1000,
     verified: false,
     timer: null
   };
 
-  // 2. Update UI
+  // 4. Update UI
   $('#otpTargetPhone').textContent = `+91 ${clean.slice(0, 5)} ${clean.slice(5)}`;
-  $$('.otp-digit').forEach(inp => { inp.value = ''; });
+  $$('.otp-digit').forEach(inp => { inp.value = ''; inp.disabled = false; });
   
   const codeDisplay = $('#otpCodeNumber');
   if (codeDisplay) codeDisplay.textContent = code;
 
+  const countdownDisplay = $('#otpCountdownDisplay');
+  if (countdownDisplay) countdownDisplay.classList.remove('hidden');
+
+  const expiryNotice = $('#otpExpiryNotice');
+  if (expiryNotice) expiryNotice.classList.add('hidden');
+
+  const secondsLeft = $('#otpSecondsLeft');
+  if (secondsLeft) secondsLeft.textContent = '30';
+
   const directFillBtn = $('#otpDirectAutoFillBtn');
   if (directFillBtn) {
+    directFillBtn.disabled = false;
     directFillBtn.onclick = () => {
+      if (Date.now() > state.otp.expiresAt || !state.otp.code) {
+        toast('Verification code expired. Please tap Resend Code.', 'error');
+        return;
+      }
       const digits = String(code).split('');
       $$('.otp-digit').forEach((inp, idx) => {
         inp.value = digits[idx] || '';
@@ -901,22 +886,19 @@ function openOtpModal(phone) {
     };
   }
 
-  // 3. Open modal
+  // 5. Open modal
   const modal = $('#otpModal');
   modal.classList.add('open');
   modal.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
 
-  // 4. Focus first digit
+  // 6. Focus first digit
   setTimeout(() => {
     $('.otp-digit[data-idx="0"]')?.focus();
   }, 300);
 
-  // 5. Start 30s resend timer
-  startOtpResendTimer(30);
-
-  // 6. Send real SMS to Messages app
-  dispatchVerificationSms(clean, code);
+  // 7. Start 30s countdown timer
+  startOtpCountdownTimer(30);
 }
 
 function closeOtpModal() {
@@ -927,21 +909,37 @@ function closeOtpModal() {
   if (state.otp.timer) clearInterval(state.otp.timer);
 }
 
-function startOtpResendTimer(seconds) {
+function startOtpCountdownTimer(seconds) {
   if (state.otp.timer) clearInterval(state.otp.timer);
   let remaining = seconds;
   const timerText = $('#otpTimerText');
   const resendBtn = $('#otpResendBtn');
+  const secondsLeft = $('#otpSecondsLeft');
+  const countdownDisplay = $('#otpCountdownDisplay');
+  const expiryNotice = $('#otpExpiryNotice');
+  const codeDisplay = $('#otpCodeNumber');
+  const directFillBtn = $('#otpDirectAutoFillBtn');
+
   if (timerText) timerText.classList.remove('hidden');
   if (resendBtn) resendBtn.classList.add('hidden');
+  if (countdownDisplay) countdownDisplay.classList.remove('hidden');
+  if (expiryNotice) expiryNotice.classList.add('hidden');
 
   state.otp.timer = setInterval(() => {
     remaining--;
+    if (secondsLeft) secondsLeft.textContent = remaining;
     if (timerText) timerText.textContent = `Resend code in 0:${remaining < 10 ? '0' : ''}${remaining}`;
+
     if (remaining <= 0) {
       clearInterval(state.otp.timer);
+      state.otp.code = null; // Expire the code
+      if (codeDisplay) codeDisplay.textContent = '------';
+      if (countdownDisplay) countdownDisplay.classList.add('hidden');
+      if (expiryNotice) expiryNotice.classList.remove('hidden');
+      if (directFillBtn) directFillBtn.disabled = true;
       if (timerText) timerText.classList.add('hidden');
       if (resendBtn) resendBtn.classList.remove('hidden');
+      toast('Verification code expired. Please tap Resend Code.', 'info');
     }
   }, 1000);
 }
@@ -949,45 +947,19 @@ function startOtpResendTimer(seconds) {
 async function verifyEnteredOtp() {
   const entered = $$('.otp-digit').map(inp => inp.value.trim()).join('');
   if (entered.length < 6) {
-    toast('Please enter the complete 6-digit OTP from your Messages app', 'error');
+    toast('Please enter the complete 6-digit verification code', 'error');
     return;
   }
 
-  if (Date.now() > state.otp.expiresAt) {
-    toast('OTP has expired. Please tap Resend OTP.', 'error');
+  if (Date.now() > state.otp.expiresAt || !state.otp.code) {
+    toast('Verification code expired. Please tap Resend Code.', 'error');
     return;
   }
 
-  let verified = false;
-
-  // 1. Verify against LostLink OTP Backend Server
-  try {
-    const res = await fetch(`${OTP_SERVER_URL}/api/verify-otp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: state.otp.phone, otp: entered })
-    });
-    const data = await res.json();
-    if (data.ok && data.verified) {
-      verified = true;
-    }
-  } catch (e) {
-    // Server not reached, fallback to Firebase or local
-  }
-
-  // 2. Verify against Firebase confirmation if active
-  if (!verified && window.confirmationResult) {
-    try {
-      await window.confirmationResult.confirm(entered);
-      verified = true;
-    } catch (e) {
-      console.warn('Firebase confirmation failed, checking local code:', e);
-    }
-  }
-
-  // 3. Verify against generated session code or master campus code
-  if (verified || entered === state.otp.code || entered === '123456') {
+  // Verify against session code or master campus code
+  if (entered === state.otp.code || entered === '123456') {
     state.otp.verified = true;
+    if (state.otp.timer) clearInterval(state.otp.timer);
     closeOtpModal();
 
     // Lock phone input & show verified tag
@@ -999,9 +971,9 @@ async function verifyEnteredOtp() {
       sendBtn.disabled = true;
     }
     $('#phoneVerifiedTag')?.classList.remove('hidden');
-    toast('Phone number verified successfully via SMS! ✔', 'success');
+    toast('Mobile number verified successfully! ✔', 'success');
   } else {
-    toast('Incorrect verification code. Please check your Messages app and try again.', 'error');
+    toast('Incorrect verification code. Please enter the 6-digit code shown above.', 'error');
     $$('.otp-digit').forEach(inp => {
       inp.style.borderColor = '#EF4444';
       setTimeout(() => inp.style.borderColor = '', 1500);
@@ -1066,7 +1038,7 @@ async function handleProfileForm(e) {
   if (!PHONE_RE.test(user.phone))    { toast('Enter a valid 10-digit mobile number','error'); return; }
   
   if (!state.otp.verified) {
-    toast('Please verify your mobile number via SMS OTP first', 'error');
+    toast('Please verify your mobile number first', 'error');
     openOtpModal(user.phone);
     return;
   }
@@ -1490,9 +1462,6 @@ function renderNotifications() {
           <button type="button" class="btn-notif-action btn-call" data-phone="${cleanPhone}" onclick="callPhoneFromEl(this); return false;">
             📞 Call
           </button>
-          <button type="button" class="btn-notif-action btn-sms" data-phone="${cleanPhone}" data-msg="${encodeURIComponent(rawMsg)}" onclick="sendSmsFromEl(this); return false;" style="background:rgba(168,85,247,0.15); color:#C084FC; border:1px solid rgba(168,85,247,0.3);">
-            📩 SMS
-          </button>
         ` : '';
       })()}
       <button type="button" class="btn-notif-action btn-maps" onclick="window.openMaps(${ADMIN_LAT}, ${ADMIN_LNG}, 'RVU Admin Block Collection Point'); return false;">
@@ -1657,7 +1626,6 @@ function matchCardHTML(m) {
         <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
           <button type="button" data-phone="${String(m.lost.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.lost.ownerName || 'there'}! Reaching out via LostLink AI regarding your lost item: ${m.lost.title}.`)}" onclick="sendWhatsAppFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; border:none; cursor:pointer;">💬 WhatsApp</button>
           <button type="button" data-phone="${String(m.lost.ownerPhone).replace(/\D/g,'')}" onclick="callPhoneFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; border:none; cursor:pointer;">📞 Call</button>
-          <button type="button" data-phone="${String(m.lost.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.lost.ownerName || 'there'}! Reaching out via LostLink AI regarding your lost item: ${m.lost.title}.`)}" onclick="sendSmsFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(168,85,247,0.18); color:#C084FC; border:none; cursor:pointer;">📩 SMS</button>
         </div>` : ''}
       </div>
     </div>
@@ -1672,7 +1640,6 @@ function matchCardHTML(m) {
         <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
           <button type="button" data-phone="${String(m.found.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.found.ownerName || 'there'}! Reaching out via LostLink AI regarding the found item: ${m.found.title}.`)}" onclick="sendWhatsAppFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; border:none; cursor:pointer;">💬 WhatsApp</button>
           <button type="button" data-phone="${String(m.found.ownerPhone).replace(/\D/g,'')}" onclick="callPhoneFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; border:none; cursor:pointer;">📞 Call</button>
-          <button type="button" data-phone="${String(m.found.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.found.ownerName || 'there'}! Reaching out via LostLink AI regarding the found item: ${m.found.title}.`)}" onclick="sendSmsFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(168,85,247,0.18); color:#C084FC; border:none; cursor:pointer;">📩 SMS</button>
         </div>` : ''}
       </div>
     </div>

@@ -91,4 +91,14 @@ public final class WebAppBridge {
     public void openMessagesApp(String phone, String text) {
         activity.runOnUiThread(() -> activity.launchNativeSmsApp(phone, text));
     }
+
+    @JavascriptInterface
+    public String getDevicePhoneNumber() {
+        return activity.getDevicePhoneNumber();
+    }
+
+    @JavascriptInterface
+    public boolean isDevicePhoneNumber(String phone) {
+        return activity.isDevicePhoneNumber(phone);
+    }
 }

@@ -292,50 +292,77 @@ public final class MainActivity extends Activity {
             if (cleanPhone.length() == 10) cleanPhone = "91" + cleanPhone;
             String encodedText = text != null ? Uri.encode(text) : "";
 
-            // Primary: Direct WhatsApp URI scheme (opens exact chat with text, NO web landing page)
+            // Primary: Direct WhatsApp URI scheme (opens exact chat with draft text, NO web landing page)
             Uri waUri = Uri.parse("whatsapp://send?phone=" + cleanPhone + "&text=" + encodedText);
             Intent waIntent = new Intent(Intent.ACTION_VIEW, waUri);
             waIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
             if (isPackageInstalled("com.whatsapp")) {
                 waIntent.setPackage("com.whatsapp");
+                try {
+                    startActivity(waIntent);
+                    return;
+                } catch (Exception ignored) {}
             } else if (isPackageInstalled("com.whatsapp.w4b")) {
                 waIntent.setPackage("com.whatsapp.w4b");
-            }
-
-            try {
-                startActivity(waIntent);
-                return;
-            } catch (Exception e1) {
-                // Try without package targeting so Android resolver picks WhatsApp or any clone
                 try {
-                    Intent genericIntent = new Intent(Intent.ACTION_VIEW, waUri);
-                    genericIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(genericIntent);
+                    startActivity(waIntent);
                     return;
                 } catch (Exception ignored) {}
             }
 
-            // Fallback: ACTION_SEND to com.whatsapp
+            // Strategy 2: Official api.whatsapp.com App Link with package targeting
+            Uri apiUri = Uri.parse("https://api.whatsapp.com/send?phone=" + cleanPhone + "&text=" + encodedText);
+            Intent apiIntent = new Intent(Intent.ACTION_VIEW, apiUri);
+            apiIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (isPackageInstalled("com.whatsapp")) {
+                apiIntent.setPackage("com.whatsapp");
+                try {
+                    startActivity(apiIntent);
+                    return;
+                } catch (Exception ignored) {}
+            } else if (isPackageInstalled("com.whatsapp.w4b")) {
+                apiIntent.setPackage("com.whatsapp.w4b");
+                try {
+                    startActivity(apiIntent);
+                    return;
+                } catch (Exception ignored) {}
+            }
+
+            // Strategy 3: Generic WhatsApp URI scheme without package targeting (Dual Messenger / clone apps)
             try {
-                Intent sendIntent = new Intent(Intent.ACTION_SEND);
-                sendIntent.setType("text/plain");
-                sendIntent.putExtra(Intent.EXTRA_TEXT, text != null ? text : "");
-                sendIntent.putExtra("jid", cleanPhone + "@s.whatsapp.net");
-                sendIntent.setPackage("com.whatsapp");
-                sendIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                startActivity(sendIntent);
+                Intent genericWaIntent = new Intent(Intent.ACTION_VIEW, waUri);
+                genericWaIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(genericWaIntent);
                 return;
             } catch (Exception ignored) {}
 
-            // Last resort: Browser wa.me only if WhatsApp app is not installed at all
-            Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/" + cleanPhone + "?text=" + encodedText));
-            webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(webIntent);
+            // Strategy 4: Generic api.whatsapp.com intent
+            try {
+                Intent genericApiIntent = new Intent(Intent.ACTION_VIEW, apiUri);
+                genericApiIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(genericApiIntent);
+                return;
+            } catch (Exception ignored) {}
+
+            // Do NOT open browser wa.me which prompts downloading WhatsApp!
+            Toast.makeText(this, "WhatsApp is not installed on this device.", Toast.LENGTH_SHORT).show();
 
         } catch (Exception e) {
             Toast.makeText(this, "Could not open WhatsApp: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
+    }
+
+    public String getDevicePhoneNumber() {
+        android.content.SharedPreferences prefs = getSharedPreferences("lostlink_prefs", MODE_PRIVATE);
+        return prefs.getString("device_phone", "9032027202");
+    }
+
+    public boolean isDevicePhoneNumber(String phone) {
+        if (phone == null) return false;
+        String clean = phone.replaceAll("[^0-9]", "");
+        if (clean.length() == 12 && clean.startsWith("91")) clean = clean.substring(2);
+        return clean.equals(getDevicePhoneNumber());
     }
 
     /**
