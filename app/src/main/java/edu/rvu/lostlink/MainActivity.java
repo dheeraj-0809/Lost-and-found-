@@ -170,20 +170,6 @@ public final class MainActivity extends Activity {
             }
 
             @Override
-            public void onPageStarted(WebView view, String url, Bitmap favicon) {
-                if (url != null && url.contains("access_token=")) {
-                    int hashIdx = url.indexOf('#');
-                    if (hashIdx != -1) {
-                        String fragment = url.substring(hashIdx + 1);
-                        view.stopLoading();
-                        view.loadUrl("file:///android_asset/index.html#" + fragment);
-                        return;
-                    }
-                }
-                super.onPageStarted(view, url, favicon);
-            }
-
-            @Override
             public void onPageFinished(WebView view, String url) {
                 // Hide the loading spinner once the page has loaded
                 if (progressBar != null) {
@@ -271,15 +257,7 @@ public final class MainActivity extends Activity {
             return false;
         }
 
-        // 6. Allow Google OAuth authentication URLs inside WebView
-        if (url.startsWith("https://accounts.google.com") ||
-            url.startsWith("https://ssl.gstatic.com") ||
-            url.startsWith("https://apis.google.com") ||
-            url.startsWith("https://accounts.youtube.com")) {
-            return false;
-        }
-
-        // 7. OAuth redirect handling
+        // 6. OAuth redirect handling — catch token redirect from Chrome and load back into WebView
         if (url.startsWith("https://dheeraj-0809.github.io/Lost-and-found-") && url.contains("access_token=")) {
             int hashIndex = url.indexOf('#');
             String hash = hashIndex != -1 ? url.substring(hashIndex + 1) : "";
@@ -287,7 +265,7 @@ public final class MainActivity extends Activity {
             return true;
         }
 
-        // 8. External web links -> launch in external browser
+        // 7. All other external web links (including accounts.google.com) → launch in Chrome browser
         if (url.startsWith("http://") || url.startsWith("https://")) {
             try {
                 Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
@@ -477,15 +455,12 @@ public final class MainActivity extends Activity {
     }
 
     public void openGoogleSignIn() {
-        String nonce = Long.toHexString(System.currentTimeMillis()) + Long.toHexString(Double.doubleToLongBits(Math.random()));
         String authUrl = "https://accounts.google.com/o/oauth2/v2/auth?" +
                 "client_id=303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com" +
                 "&redirect_uri=" + Uri.encode("https://dheeraj-0809.github.io/Lost-and-found-/") +
                 "&response_type=token" +
                 "&scope=" + Uri.encode("email profile") +
-                "&nonce=" + Uri.encode(nonce) +
                 "&prompt=select_account" +
-                "&include_granted_scopes=true" +
                 "&hd=rvu.edu.in";
         try {
             openWebAuth(authUrl);

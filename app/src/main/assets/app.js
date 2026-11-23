@@ -143,80 +143,25 @@ const native = {
     const GOOGLE_CLIENT_ID = '303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com';
     setAuthLoading(true, 'Opening Google Account Chooser...');
 
-    const isLocal = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1');
-    const redirectUri = isLocal
-      ? window.location.origin + window.location.pathname
-      : 'https://dheeraj-0809.github.io/Lost-and-found-/';
+    const redirectUri = 'https://dheeraj-0809.github.io/Lost-and-found-/';
 
-    function fallbackCleanOAuthRedirect() {
-      const nonce = Math.random().toString(36).substring(2) + Date.now().toString(36);
-      // Scope 'email profile' without 'openid' avoids OIDC nonce/malformed errors on response_type=token
-      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-        `client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&response_type=token` +
-        `&scope=${encodeURIComponent('email profile')}` +
-        `&nonce=${encodeURIComponent(nonce)}` +
-        `&prompt=select_account` +
-        `&include_granted_scopes=true` +
-        `&hd=rvu.edu.in`;
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      `client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&response_type=token` +
+      `&scope=${encodeURIComponent('email profile')}` +
+      `&prompt=select_account` +
+      `&hd=rvu.edu.in`;
 
-      window.location.href = authUrl;
+    // On Android native APK: open Google OAuth in Chrome (not WebView) so Google accepts it
+    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.openWebAuth) {
+      window.LostLinkNative.openWebAuth(authUrl);
+      setTimeout(() => setAuthLoading(false), 3000);
+      return;
     }
 
-    // 1. Google Identity Services (GIS) Token Client — modern, official, zero-redirect
-    if (window.google && window.google.accounts && window.google.accounts.oauth2) {
-      try {
-        const client = window.google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID,
-          scope: 'email profile',
-          prompt: 'select_account',
-          hd: 'rvu.edu.in',
-          callback: async (resp) => {
-            if (resp.error) {
-              console.warn('GIS Token error:', resp.error);
-              setAuthLoading(false);
-              if (resp.error === 'popup_closed_by_user') {
-                toast('Sign-in cancelled', 'info');
-              } else {
-                fallbackCleanOAuthRedirect();
-              }
-              return;
-            }
-            if (resp.access_token) {
-              setAuthLoading(true, 'Verifying @rvu.edu.in account...');
-              try {
-                const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                  headers: { Authorization: `Bearer ${resp.access_token}` }
-                });
-                const profile = await res.json();
-                if (profile && profile.email && RVU_EMAIL_RE.test(profile.email)) {
-                  window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
-                    ok: true,
-                    name: profile.name || profile.email.split('@')[0],
-                    email: profile.email.toLowerCase(),
-                    photoUrl: profile.picture || ''
-                  });
-                } else {
-                  setAuthLoading(false);
-                  toast('Access restricted: Please select an official @rvu.edu.in Google account', 'error');
-                }
-              } catch (e) {
-                setAuthLoading(false);
-                toast('Failed to load Google profile: ' + e.message, 'error');
-              }
-            }
-          }
-        });
-        client.requestAccessToken({ prompt: 'select_account', hd: 'rvu.edu.in' });
-        return;
-      } catch (gisErr) {
-        console.warn('GIS init error, falling back:', gisErr);
-      }
-    }
-
-    // 2. Direct clean redirect fallback (no openid conflict)
-    fallbackCleanOAuthRedirect();
+    // On iPhone Safari / Desktop browsers: direct full-page redirect
+    window.location.href = authUrl;
   },
   openWhatsApp: (phone, text) => {
     let cleanPhone = String(phone || '').replace(/\D/g, '');
@@ -1913,46 +1858,6 @@ async function init() {
 
   if (state.user) {
     startSync();
-  } else {
-    setTimeout(initGoogleOneTap, 1200);
-  }
-}
-
-function initGoogleOneTap() {
-  const GOOGLE_CLIENT_ID = '303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com';
-  if (window.google && window.google.accounts && window.google.accounts.id) {
-    try {
-      window.google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: (resp) => {
-          if (resp && resp.credential) {
-            try {
-              const base64Url = resp.credential.split('.')[1];
-              const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-              const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
-              const profile = JSON.parse(jsonPayload);
-              if (profile && profile.email && RVU_EMAIL_RE.test(profile.email)) {
-                window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
-                  ok: true,
-                  name: profile.name || profile.email.split('@')[0],
-                  email: profile.email.toLowerCase(),
-                  photoUrl: profile.picture || ''
-                });
-              } else {
-                toast('Access restricted: Please select an official @rvu.edu.in Google account', 'error');
-              }
-            } catch (err) {
-              console.warn('One Tap credential parse error:', err);
-            }
-          }
-        },
-        hd: 'rvu.edu.in',
-        auto_select: false
-      });
-      window.google.accounts.id.prompt();
-    } catch (e) {
-      console.warn('One Tap init error:', e);
-    }
   }
 }
 
