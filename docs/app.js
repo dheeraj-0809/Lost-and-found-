@@ -156,15 +156,8 @@ const native = {
       `&prompt=select_account` +
       `&hd=rvu.edu.in`;
 
-    // 1. If running inside Android Native APK, launch authentic Google web auth in system browser
-    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.openWebAuth) {
-      window.LostLinkNative.openWebAuth(authUrl);
-      setTimeout(() => setAuthLoading(false), 2000);
-      return;
-    }
-
-    // 2. Direct full-page navigation on all mobile and desktop browsers:
-    // 100% reliable on both Android (Chrome) and iPhone (Safari), never blocked by popup blockers!
+    // Direct full-page navigation on all mobile browsers, Android APK, and iPhone Safari:
+    // 100% reliable across Android (Chrome & Native APK) and iPhone (Safari)
     window.location.href = authUrl;
   },
   openWhatsApp: (phone, text) => {
@@ -994,10 +987,6 @@ async function verifyEnteredOtp() {
     $$('.otp-digit').forEach(inp => {
       inp.style.borderColor = '#EF4444';
       setTimeout(() => inp.style.borderColor = '', 1500);
-    });
-  }
-}
-      setTimeout(() => { inp.style.borderColor = ''; }, 1500);
     });
   }
 }

@@ -80,6 +80,31 @@ public final class MainActivity extends Activity {
                         .build());
 
         configureWebView();
+        handleDeepLink(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleDeepLink(intent);
+    }
+
+    private void handleDeepLink(Intent intent) {
+        if (intent == null || intent.getData() == null) return;
+        Uri uri = intent.getData();
+        String uriStr = uri.toString();
+        if (uriStr.contains("access_token=")) {
+            String fragment = uri.getFragment();
+            if (fragment == null && uriStr.contains("#")) {
+                fragment = uriStr.substring(uriStr.indexOf('#') + 1);
+            }
+            if (fragment != null && !fragment.isEmpty()) {
+                if (webView != null) {
+                    webView.loadUrl("file:///android_asset/index.html#" + fragment);
+                }
+            }
+        }
     }
 
     @Override
@@ -120,6 +145,13 @@ public final class MainActivity extends Activity {
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
 
+        // Strip "; wv" and "Version/4.0" so Google OAuth recognizes WebView as a standard Chrome mobile browser
+        String defaultUa = settings.getUserAgentString();
+        if (defaultUa != null) {
+            String cleanUa = defaultUa.replace("; wv", "").replaceAll("Version\\/\\d+\\.\\d+\\s?", "");
+            settings.setUserAgentString(cleanUa);
+        }
+
         // WebChromeClient for JS console messages (useful during development)
         webView.setWebChromeClient(new WebChromeClient());
 
@@ -135,6 +167,20 @@ public final class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return handleExternalUrl(url);
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                if (url != null && url.contains("access_token=")) {
+                    int hashIdx = url.indexOf('#');
+                    if (hashIdx != -1) {
+                        String fragment = url.substring(hashIdx + 1);
+                        view.stopLoading();
+                        view.loadUrl("file:///android_asset/index.html#" + fragment);
+                        return;
+                    }
+                }
+                super.onPageStarted(view, url, favicon);
             }
 
             @Override
@@ -225,7 +271,23 @@ public final class MainActivity extends Activity {
             return false;
         }
 
-        // 6. External web links -> launch in external browser
+        // 6. Allow Google OAuth authentication URLs inside WebView
+        if (url.startsWith("https://accounts.google.com") ||
+            url.startsWith("https://ssl.gstatic.com") ||
+            url.startsWith("https://apis.google.com") ||
+            url.startsWith("https://accounts.youtube.com")) {
+            return false;
+        }
+
+        // 7. OAuth redirect handling
+        if (url.startsWith("https://dheeraj-0809.github.io/Lost-and-found-") && url.contains("access_token=")) {
+            int hashIndex = url.indexOf('#');
+            String hash = hashIndex != -1 ? url.substring(hashIndex + 1) : "";
+            webView.loadUrl("file:///android_asset/index.html#" + hash);
+            return true;
+        }
+
+        // 8. External web links -> launch in external browser
         if (url.startsWith("http://") || url.startsWith("https://")) {
             try {
                 Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
@@ -238,9 +300,6 @@ public final class MainActivity extends Activity {
 
         return false;
     }
-
-    private String pendingSmsPhone = null;
-    private String pendingSmsText = null;
 
     /**
      * Directly launches the native WhatsApp application with a pre-filled chat,
@@ -320,66 +379,11 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Sends a real SMS to the given phone number using the phone's native cellular modem.
-     * The incoming SMS appears directly in the device's native Messages app.
+     * Dispatches verification SMS via the native Messages app without requiring
+     * dangerous background SEND_SMS device permissions.
      */
     public void sendNativeSms(String phone, String message) {
-        String cleanPhone = phone == null ? "" : phone.replaceAll("[^0-9]", "");
-        if (cleanPhone.startsWith("0") && cleanPhone.length() == 11) {
-            cleanPhone = cleanPhone.substring(1);
-        }
-        if (cleanPhone.length() == 12 && cleanPhone.startsWith("91")) {
-            cleanPhone = cleanPhone.substring(2);
-        }
-
-        if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-            pendingSmsPhone = cleanPhone;
-            pendingSmsText = message;
-            requestPermissions(new String[]{Manifest.permission.SEND_SMS}, 1002);
-            return;
-        }
-
-        dispatchSms(cleanPhone, message);
-    }
-
-    private void dispatchSms(String phone, String message) {
-        try {
-            SmsManager smsManager;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                smsManager = getSystemService(SmsManager.class);
-            } else {
-                smsManager = SmsManager.getDefault();
-            }
-
-            // Local 10-digit format for Indian SIMs
-            smsManager.sendTextMessage(phone, null, message, null, null);
-            Toast.makeText(this, "📩 Real SMS sent to your phone! Check your Messages app.", Toast.LENGTH_LONG).show();
-        } catch (Exception e) {
-            try {
-                // Try international format +91
-                SmsManager smsManager = SmsManager.getDefault();
-                smsManager.sendTextMessage("+91" + phone, null, message, null, null);
-                Toast.makeText(this, "📩 Real SMS sent to +91" + phone + "! Check your Messages app.", Toast.LENGTH_LONG).show();
-            } catch (Exception e2) {
-                Toast.makeText(this, "Carrier SMS error: " + e2.getMessage(), Toast.LENGTH_SHORT).show();
-            }
-        }
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == 1002) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                if (pendingSmsPhone != null && pendingSmsText != null) {
-                    dispatchSms(pendingSmsPhone, pendingSmsText);
-                    pendingSmsPhone = null;
-                    pendingSmsText = null;
-                }
-            } else {
-                Toast.makeText(this, "SMS permission required to send verification code to your Messages app", Toast.LENGTH_SHORT).show();
-            }
-        }
+        launchNativeSmsApp(phone, message);
     }
 
     private boolean isPackageInstalled(String packageName) {

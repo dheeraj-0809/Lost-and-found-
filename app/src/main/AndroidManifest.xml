@@ -3,8 +3,6 @@
 
     <!-- Internet required for Google Sign-In and optional cloud sync -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- SMS permission to send real verification SMS directly to Messages app -->
-    <uses-permission android:name="android.permission.SEND_SMS" />
 
     <!-- Query packages to directly launch native WhatsApp, WhatsApp Business, Google Maps, and Dialer -->
     <queries>
@@ -40,11 +38,27 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Google OAuth Deep Link Redirect Filters -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https"
+                      android:host="dheeraj-0809.github.io"
+                      android:pathPrefix="/Lost-and-found-" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="lostlink" />
             </intent-filter>
         </activity>
 
