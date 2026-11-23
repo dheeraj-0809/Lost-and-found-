@@ -283,10 +283,13 @@ function timeAgo(ts) {
 function safeArr(str) { try { const v=JSON.parse(str); return Array.isArray(v)?v:[]; } catch { return []; } }
 function safeObj(str,fb={}) { try { return JSON.parse(str)||fb; } catch { return fb; } }
 function norm(v='') { return String(v).trim().toLowerCase().replace(/[^a-z0-9 ]/g,''); }
+function normEmail(em) { return String(em || '').toLowerCase().trim(); }
 function emailToDbKey(email) { return String(email || '').toLowerCase().trim().replace(/\./g, '_dot_'); }
 
 function matchId(m) {
-  return `${m.lost.id || m.lost.createdAt}-${m.found.id || m.found.createdAt}`;
+  const lId = m.lost._fbKey || m.lost.id || m.lost.createdAt;
+  const fId = m.found._fbKey || m.found.id || m.found.createdAt;
+  return `${lId}-${fId}`;
 }
 
 function getSeenIds() { return safeArr(localStorage.getItem(SEEN_KEY)); }
@@ -417,20 +420,45 @@ function cacheReports(reports) {
 /** Fetch all reports from Firebase (or local fallback) and update state */
 async function syncReports(showToast=false) {
   if (FIREBASE_DB_URL) {
-    const raw = await fbGet('reports');
-    if (raw) {
-      // Firebase returns an object keyed by push-ID
-      const arr = Object.entries(raw).map(([key,val])=>({ ...val, _fbKey:key }));
-      arr.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
-      state.reports = arr;
-      cacheReports(arr);
-      state.firebaseOk = true;
-      updateSyncStatus('Synced');
-      if (showToast) toast('Reports updated ✓');
-    } else {
+    try {
+      const raw = await fbGet('reports');
+      if (raw) {
+        // Firebase returns an object keyed by push-ID
+        const fbArr = Object.entries(raw).map(([key,val])=>({ ...val, _fbKey:key }));
+        const localArr = localGetReports();
+        const mergedMap = new Map();
+
+        fbArr.forEach(r => {
+          const k = r._fbKey || r.id || String(r.createdAt);
+          mergedMap.set(k, r);
+        });
+
+        localArr.forEach(r => {
+          const k = r._fbKey || r.id || String(r.createdAt);
+          if (!mergedMap.has(k)) {
+            mergedMap.set(k, r);
+            if (!r._fbKey) {
+              fbPost('reports', r).then(res => { if (res && res.name) r._fbKey = res.name; }).catch(() => {});
+            }
+          }
+        });
+
+        const arr = Array.from(mergedMap.values());
+        arr.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+        state.reports = arr;
+        cacheReports(arr);
+        state.firebaseOk = true;
+        updateSyncStatus('Synced');
+        if (showToast) toast('Reports updated ✓');
+      } else {
+        state.reports = localGetReports();
+        state.firebaseOk = false;
+        updateSyncStatus('Offline mode');
+      }
+    } catch (e) {
+      state.reports = localGetReports();
       state.firebaseOk = false;
       updateSyncStatus('Offline mode');
-      state.reports = localGetReports();
     }
   } else {
     state.reports = localGetReports();
@@ -442,8 +470,8 @@ async function syncReports(showToast=false) {
   const prevCount = state.matches ? state.matches.length : 0;
   state.matches = computeMatches(state.reports);
   if (state.user && state.matches.length > prevCount) {
-    const myEmail = state.user.email;
-    const newMatches = state.matches.filter(m => m.lost.ownerEmail === myEmail || m.found.ownerEmail === myEmail);
+    const myEmail = normEmail(state.user.email);
+    const newMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail);
     if (newMatches.length > 0) {
       notifyUserOfMatch(newMatches[0]);
     }
@@ -519,20 +547,24 @@ function updateSyncStatus(msg) {
  *   Date proximity (≤3d):  3 pts
  */
 function computeMatches(reports) {
-  const losts  = reports.filter(r => r.type==='LOST'  && r.status==='OPEN');
-  const founds = reports.filter(r => r.type==='FOUND' && r.status==='OPEN');
+  const losts  = reports.filter(r => r.type && r.type.toUpperCase()==='LOST'  && (!r.status || r.status.toUpperCase()==='OPEN'));
+  const founds = reports.filter(r => r.type && r.type.toUpperCase()==='FOUND' && (!r.status || r.status.toUpperCase()==='OPEN'));
   const out    = [];
   const seen   = new Set();
 
   losts.forEach(l => {
     founds.forEach(f => {
       // Don't match the same person's reports with themselves
-      if (l.ownerEmail && f.ownerEmail && l.ownerEmail===f.ownerEmail) return;
+      const lEmail = normEmail(l.ownerEmail);
+      const fEmail = normEmail(f.ownerEmail);
+      if (lEmail && fEmail && lEmail === fEmail) return;
 
       const s = scoreMatch(l, f);
       if (s.score < 30) return; // minimum threshold
 
-      const key = `${l.id||l.createdAt}_${f.id||f.createdAt}`;
+      const lKey = l._fbKey || l.id || String(l.createdAt);
+      const fKey = f._fbKey || f.id || String(f.createdAt);
+      const key = `${lKey}_${fKey}`;
       if (seen.has(key)) return;
       seen.add(key);
 
@@ -751,6 +783,28 @@ function showNewUserRegistration(account) {
   $('#authEmail').value = account.email;
   $('#authName').value  = account.name || '';
   $('#regVerifiedEmail').textContent = account.email;
+
+  if (account.phone) {
+    $('#authPhone').value = account.phone;
+  }
+  if (account.branch) {
+    $('#authBranch').value = account.branch;
+  }
+  if (account.semester) {
+    $('#authSemester').value = account.semester;
+  }
+
+  // Mobile verification required before entering home page
+  state.otp = { code: null, phone: null, expiresAt: 0, verified: false, timer: null };
+  const sendBtn = $('#sendOtpBtn');
+  if (sendBtn) {
+    sendBtn.textContent = 'Verify Mobile';
+    sendBtn.classList.remove('verified');
+    sendBtn.disabled = false;
+  }
+  const phoneInp = $('#authPhone');
+  if (phoneInp) phoneInp.readOnly = false;
+  $('#phoneVerifiedTag')?.classList.add('hidden');
 
   const avatarEl = $('#regAvatar');
   if (avatarEl) {
@@ -1122,36 +1176,35 @@ window.onNativeGoogleSignIn = async (result) => {
     const safeKey = emailToDbKey(email);
     const existingUser = await fbGet(`users/${safeKey}`);
 
+    setAuthLoading(false);
     if (existingUser && existingUser.email) {
-      // 🟢 OLD USER: Instant 1-tap entry without filling any forms!
-      setAuthLoading(false);
-      const updatedProfile = {
-        ...existingUser,
+      showNewUserRegistration({
+        email,
         name: name || existingUser.name,
-        photoUrl: photoUrl || existingUser.photoUrl || ''
-      };
-      saveUser(updatedProfile);
-      resetAuthView();
-      renderAuthState();
-      startSync();
-      toast(`Welcome back, ${updatedProfile.name.split(' ')[0]}! 👋`, 'success');
+        photoUrl: photoUrl || existingUser.photoUrl || '',
+        phone: existingUser.phone || '',
+        branch: existingUser.branch || '',
+        semester: existingUser.semester || ''
+      });
+      toast(`Google ID verified! Please verify your device mobile number.`, 'info');
     } else {
-      // 🔵 NEW USER: First-time sign up, show brief profile setup
-      setAuthLoading(false);
       showNewUserRegistration({ email, name, photoUrl });
-      toast('Account verified! Complete your profile to finish setup.', 'info');
+      toast('Google ID verified! Complete profile setup and verify mobile number.', 'info');
     }
   } catch (err) {
     console.error('User lookup error:', err);
     setAuthLoading(false);
-    // Offline / fallback: check local storage
     const local = loadUser();
     if (local && local.email === email) {
-      saveUser(local);
-      resetAuthView();
-      renderAuthState();
-      startSync();
-      toast(`Welcome back, ${local.name.split(' ')[0]}! 👋`, 'success');
+      showNewUserRegistration({
+        email,
+        name: name || local.name,
+        photoUrl: photoUrl || local.photoUrl || '',
+        phone: local.phone || '',
+        branch: local.branch || '',
+        semester: local.semester || ''
+      });
+      toast('Google ID verified! Please verify your device mobile number.', 'info');
     } else {
       showNewUserRegistration({ email, name, photoUrl });
     }
@@ -1298,16 +1351,16 @@ async function submitReport(e) {
 // ============================================================
 function renderDashboard() {
   if (!state.user) return;
-  const myEmail = state.user.email;
-  const r = state.reports.filter(x => x.ownerEmail === myEmail);
-  const myMatches = state.matches.filter(m => m.lost.ownerEmail === myEmail || m.found.ownerEmail === myEmail);
+  const myEmail = normEmail(state.user.email);
+  const r = state.reports.filter(x => normEmail(x.ownerEmail) === myEmail);
+  const myMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail);
 
-  animNum('lostCount',    r.filter(x=>x.type==='LOST'  && x.status==='OPEN').length);
-  animNum('foundCount',   r.filter(x=>x.type==='FOUND' && x.status==='OPEN').length);
+  animNum('lostCount',    r.filter(x=>x.type==='LOST'  && (!x.status || x.status==='OPEN')).length);
+  animNum('foundCount',   r.filter(x=>x.type==='FOUND' && (!x.status || x.status==='OPEN')).length);
   animNum('matchCount',   myMatches.length);
   animNum('returnedCount',r.filter(x=>x.status==='RETURNED').length);
 
-  const recent = r.slice(0, 5);
+  const recent = state.reports.slice(0, 5);
   $('#recentReports').innerHTML = recent.length
     ? recent.map(reportCardHTML).join('')
     : emptyHTML('🔍','No reports yet','Be the first to report a lost or found item!');
@@ -1318,10 +1371,8 @@ function renderDashboard() {
 // ============================================================
 function renderAllReports() {
   if (!state.user) return;
-  const myEmail = state.user.email;
-  const myReports = state.reports.filter(x => x.ownerEmail === myEmail);
   const f = state.activeFilter;
-  const list = f==='ALL' ? myReports : myReports.filter(r=>r.type===f);
+  const list = f==='ALL' ? state.reports : state.reports.filter(r=>r.type===f);
   $('#allReports').innerHTML = list.length
     ? list.map(reportCardHTML).join('')
     : emptyHTML('📋','No reports','Submit a report or try a different filter.');
@@ -1332,8 +1383,8 @@ function renderAllReports() {
 // ============================================================
 function renderMatches() {
   if (!state.user) return;
-  const myEmail = state.user.email;
-  const myMatches = state.matches.filter(m => m.lost.ownerEmail === myEmail || m.found.ownerEmail === myEmail);
+  const myEmail = normEmail(state.user.email);
+  const myMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail);
   $('#matchList').innerHTML = myMatches.length
     ? myMatches.map(matchCardHTML).join('')
     : emptyHTML('✨','No matches yet','Submit both a lost and found report with similar details to see AI suggestions.');
@@ -1345,9 +1396,12 @@ function renderMatches() {
 function renderNotifications() {
   if (!state.user) return;
 
-  const myEmail = state.user.email;
+  const myEmail = normEmail(state.user.email);
   const clearedIds = getClearedNotifIds();
-  const myMatches = state.matches.filter(m => m.lost.ownerEmail === myEmail && !clearedIds.includes(matchId(m)));
+  const myMatches = state.matches.filter(m => 
+    (normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail) && 
+    !clearedIds.includes(matchId(m))
+  );
 
   const clearAllBtn = $('#notifClearAllBtn');
   if (clearAllBtn) {
@@ -1361,8 +1415,8 @@ function renderNotifications() {
 
   $('#notifList').innerHTML = myMatches.map(m => {
     const mId = matchId(m);
-    const iAmLost  = m.lost.ownerEmail  === myEmail;
-    const iAmFound = m.found.ownerEmail === myEmail;
+    const iAmLost  = normEmail(m.lost.ownerEmail)  === myEmail;
+    const iAmFound = normEmail(m.found.ownerEmail) === myEmail;
     const other    = iAmLost ? m.found : m.lost;
     const myItem   = iAmLost ? m.lost  : m.found;
     const role     = iAmLost ? 'found' : 'lost';
@@ -1492,10 +1546,10 @@ function renderNotifications() {
 
 function updateNotifBadge() {
   if (!state.user) return;
-  const myEmail = state.user.email;
+  const myEmail = normEmail(state.user.email);
   const seenIds = getSeenIds();
   const clearedIds = getClearedNotifIds();
-  const myMatches = state.matches.filter(m => (m.lost.ownerEmail === myEmail || m.found.ownerEmail === myEmail) && !clearedIds.includes(matchId(m)));
+  const myMatches = state.matches.filter(m => (normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail) && !clearedIds.includes(matchId(m)));
   const unseen = myMatches.filter(m => !seenIds.includes(matchId(m))).length;
 
   // Header Bell Badge
@@ -1515,8 +1569,9 @@ function updateNotifBadge() {
   // Bottom Nav Matches Tab Badge
   const matchesBadge = $('#matchesNotifBadge');
   if (matchesBadge) {
-    matchesBadge.textContent = myMatches.length;
-    matchesBadge.classList.toggle('hidden', myMatches.length === 0);
+    const totalMyMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail).length;
+    matchesBadge.textContent = totalMyMatches;
+    matchesBadge.classList.toggle('hidden', totalMyMatches === 0);
   }
 
   // Home Screen Match Alert Banner
@@ -1525,7 +1580,7 @@ function updateNotifBadge() {
   if (banner) {
     if (myMatches.length > 0) {
       const topMatch = myMatches[0];
-      const iAmLost = topMatch.lost.ownerEmail === myEmail;
+      const iAmLost = normEmail(topMatch.lost.ownerEmail) === myEmail;
       const myItem = iAmLost ? topMatch.lost : topMatch.found;
       const otherItem = iAmLost ? topMatch.found : topMatch.lost;
       if (bannerText) {
@@ -1544,7 +1599,8 @@ function updateNotifBadge() {
 function renderMyReports() {
   if (!state.user) return;
   populateProfile();
-  const mine = state.reports.filter(r=>r.ownerEmail===state.user.email);
+  const myEmail = normEmail(state.user.email);
+  const mine = state.reports.filter(r=>normEmail(r.ownerEmail)===myEmail);
   $('#myReportsList').innerHTML = mine.length
     ? mine.map(reportCardHTML).join('')
     : emptyHTML('📝','No reports yet','Use the + button to file your first report.');
@@ -1833,12 +1889,15 @@ async function init() {
   }
 
   state.user = loadUser();
+  state.reports = localGetReports();
+  state.matches = computeMatches(state.reports);
   populateLocationDropdown();
   bindEvents();
   $('#eventDate').value = localDate();
   renderAuthState();
 
   if (state.user) {
+    refreshAll();
     startSync();
   }
 }
