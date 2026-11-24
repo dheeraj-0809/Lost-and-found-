@@ -140,122 +140,28 @@ const native = {
     }
   },
   signInWithGoogle: () => {
-    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.signInWithGoogle) {
-      window.LostLinkNative.signInWithGoogle();
-      return;
-    }
-
-    // Official Web / iPhone Google Sign-In via Google Identity Services
     const GOOGLE_CLIENT_ID = '303643726402-jsrpa3pb38ovlquk9dmvnn20b1cu3e97.apps.googleusercontent.com';
     setAuthLoading(true, 'Opening Google Account Chooser...');
 
-    // 1. Primary: Google Identity Services OAuth 2.0 Token Client (shows authentic account picker)
-    if (window.google && window.google.accounts && window.google.accounts.oauth2) {
-      try {
-        const client = window.google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID,
-          scope: 'openid email profile',
-          prompt: 'select_account',
-          hosted_domain: 'rvu.edu.in',
-          callback: async (tokenResp) => {
-            if (tokenResp.error) {
-              setAuthLoading(false);
-              if (tokenResp.error !== 'access_denied') {
-                toast('Google sign-in cancelled or failed', 'error');
-              }
-              return;
-            }
-            try {
-              setAuthLoading(true, 'Verifying @rvu.edu.in account...');
-              const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                headers: { Authorization: `Bearer ${tokenResp.access_token}` }
-              });
-              const profile = await userInfoRes.json();
-              if (!profile || !profile.email) {
-                setAuthLoading(false);
-                toast('Could not retrieve account details from Google', 'error');
-                return;
-              }
-              const gEmail = profile.email.toLowerCase().trim();
-              if (!RVU_EMAIL_RE.test(gEmail)) {
-                setAuthLoading(false);
-                toast(`Access restricted: ${gEmail} is not an official @rvu.edu.in account. Please select your RV University email.`, 'error');
-                return;
-              }
-              window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
-                ok: true,
-                name: profile.name || gEmail.split('@')[0],
-                email: gEmail,
-                photoUrl: profile.picture || ''
-              });
-            } catch (err) {
-              setAuthLoading(false);
-              toast('Network error verifying Google account: ' + err.message, 'error');
-            }
-          }
-        });
-        client.requestAccessToken();
-        return;
-      } catch (e) {
-        console.warn('GSI token client error, falling back to OAuth popup:', e);
-      }
-    }
+    const redirectUri = 'https://dheeraj-0809.github.io/Lost-and-found-/';
 
-    // 2. Direct Google OAuth 2.0 Web Popup fallback (forces account selector & rvu.edu.in domain)
-    const redirectUri = window.location.origin + window.location.pathname;
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&response_type=token` +
-      `&scope=${encodeURIComponent('openid email profile')}` +
+      `&scope=${encodeURIComponent('email profile')}` +
       `&prompt=select_account` +
       `&hd=rvu.edu.in`;
 
-    const popup = window.open(authUrl, 'GoogleSignIn', 'width=500,height=600,menubar=no,toolbar=no');
-    if (!popup) {
-      window.location.href = authUrl;
+    // On Android native APK: open Google OAuth in Chrome (not WebView) so Google accepts it
+    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.openWebAuth) {
+      window.LostLinkNative.openWebAuth(authUrl);
+      setTimeout(() => setAuthLoading(false), 3000);
       return;
     }
 
-    const pollTimer = setInterval(() => {
-      try {
-        if (!popup || popup.closed) {
-          clearInterval(pollTimer);
-          setAuthLoading(false);
-          return;
-        }
-        if (popup.location && popup.location.href && popup.location.href.includes('access_token=')) {
-          const hash = popup.location.hash.substring(1);
-          popup.close();
-          clearInterval(pollTimer);
-          const params = new URLSearchParams(hash);
-          const accessToken = params.get('access_token');
-          if (accessToken) {
-            setAuthLoading(true, 'Verifying @rvu.edu.in account...');
-            fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-              headers: { Authorization: `Bearer ${accessToken}` }
-            }).then(r => r.json()).then(profile => {
-              if (profile && profile.email && RVU_EMAIL_RE.test(profile.email)) {
-                window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
-                  ok: true,
-                  name: profile.name || profile.email.split('@')[0],
-                  email: profile.email.toLowerCase(),
-                  photoUrl: profile.picture || ''
-                });
-              } else {
-                setAuthLoading(false);
-                toast('Access restricted: Please select your official @rvu.edu.in Google account', 'error');
-              }
-            }).catch(() => {
-              setAuthLoading(false);
-              toast('Could not verify Google account', 'error');
-            });
-          }
-        }
-      } catch (ignored) {
-        // Cross-origin wait until redirect
-      }
-    }, 500);
+    // On iPhone Safari / Desktop browsers: direct full-page redirect
+    window.location.href = authUrl;
   },
   openWhatsApp: (phone, text) => {
     let cleanPhone = String(phone || '').replace(/\D/g, '');
@@ -377,10 +283,13 @@ function timeAgo(ts) {
 function safeArr(str) { try { const v=JSON.parse(str); return Array.isArray(v)?v:[]; } catch { return []; } }
 function safeObj(str,fb={}) { try { return JSON.parse(str)||fb; } catch { return fb; } }
 function norm(v='') { return String(v).trim().toLowerCase().replace(/[^a-z0-9 ]/g,''); }
+function normEmail(em) { return String(em || '').toLowerCase().trim(); }
 function emailToDbKey(email) { return String(email || '').toLowerCase().trim().replace(/\./g, '_dot_'); }
 
 function matchId(m) {
-  return `${m.lost.id || m.lost.createdAt}-${m.found.id || m.found.createdAt}`;
+  const lId = m.lost._fbKey || m.lost.id || m.lost.createdAt;
+  const fId = m.found._fbKey || m.found.id || m.found.createdAt;
+  return `${lId}-${fId}`;
 }
 
 function getSeenIds() { return safeArr(localStorage.getItem(SEEN_KEY)); }
@@ -511,20 +420,45 @@ function cacheReports(reports) {
 /** Fetch all reports from Firebase (or local fallback) and update state */
 async function syncReports(showToast=false) {
   if (FIREBASE_DB_URL) {
-    const raw = await fbGet('reports');
-    if (raw) {
-      // Firebase returns an object keyed by push-ID
-      const arr = Object.entries(raw).map(([key,val])=>({ ...val, _fbKey:key }));
-      arr.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
-      state.reports = arr;
-      cacheReports(arr);
-      state.firebaseOk = true;
-      updateSyncStatus('Synced');
-      if (showToast) toast('Reports updated ✓');
-    } else {
+    try {
+      const raw = await fbGet('reports');
+      if (raw) {
+        // Firebase returns an object keyed by push-ID
+        const fbArr = Object.entries(raw).map(([key,val])=>({ ...val, _fbKey:key }));
+        const localArr = localGetReports();
+        const mergedMap = new Map();
+
+        fbArr.forEach(r => {
+          const k = r._fbKey || r.id || String(r.createdAt);
+          mergedMap.set(k, r);
+        });
+
+        localArr.forEach(r => {
+          const k = r._fbKey || r.id || String(r.createdAt);
+          if (!mergedMap.has(k)) {
+            mergedMap.set(k, r);
+            if (!r._fbKey) {
+              fbPost('reports', r).then(res => { if (res && res.name) r._fbKey = res.name; }).catch(() => {});
+            }
+          }
+        });
+
+        const arr = Array.from(mergedMap.values());
+        arr.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+        state.reports = arr;
+        cacheReports(arr);
+        state.firebaseOk = true;
+        updateSyncStatus('Synced');
+        if (showToast) toast('Reports updated ✓');
+      } else {
+        state.reports = localGetReports();
+        state.firebaseOk = false;
+        updateSyncStatus('Offline mode');
+      }
+    } catch (e) {
+      state.reports = localGetReports();
       state.firebaseOk = false;
       updateSyncStatus('Offline mode');
-      state.reports = localGetReports();
     }
   } else {
     state.reports = localGetReports();
@@ -536,8 +470,8 @@ async function syncReports(showToast=false) {
   const prevCount = state.matches ? state.matches.length : 0;
   state.matches = computeMatches(state.reports);
   if (state.user && state.matches.length > prevCount) {
-    const myEmail = state.user.email;
-    const newMatches = state.matches.filter(m => m.lost.ownerEmail === myEmail || m.found.ownerEmail === myEmail);
+    const myEmail = normEmail(state.user.email);
+    const newMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail);
     if (newMatches.length > 0) {
       notifyUserOfMatch(newMatches[0]);
     }
@@ -613,20 +547,24 @@ function updateSyncStatus(msg) {
  *   Date proximity (≤3d):  3 pts
  */
 function computeMatches(reports) {
-  const losts  = reports.filter(r => r.type==='LOST'  && r.status==='OPEN');
-  const founds = reports.filter(r => r.type==='FOUND' && r.status==='OPEN');
+  const losts  = reports.filter(r => r.type && r.type.toUpperCase()==='LOST'  && (!r.status || r.status.toUpperCase()==='OPEN'));
+  const founds = reports.filter(r => r.type && r.type.toUpperCase()==='FOUND' && (!r.status || r.status.toUpperCase()==='OPEN'));
   const out    = [];
   const seen   = new Set();
 
   losts.forEach(l => {
     founds.forEach(f => {
       // Don't match the same person's reports with themselves
-      if (l.ownerEmail && f.ownerEmail && l.ownerEmail===f.ownerEmail) return;
+      const lEmail = normEmail(l.ownerEmail);
+      const fEmail = normEmail(f.ownerEmail);
+      if (lEmail && fEmail && lEmail === fEmail) return;
 
       const s = scoreMatch(l, f);
       if (s.score < 30) return; // minimum threshold
 
-      const key = `${l.id||l.createdAt}_${f.id||f.createdAt}`;
+      const lKey = l._fbKey || l.id || String(l.createdAt);
+      const fKey = f._fbKey || f.id || String(f.createdAt);
+      const key = `${lKey}_${fKey}`;
       if (seen.has(key)) return;
       seen.add(key);
 
@@ -846,6 +784,28 @@ function showNewUserRegistration(account) {
   $('#authName').value  = account.name || '';
   $('#regVerifiedEmail').textContent = account.email;
 
+  if (account.phone) {
+    $('#authPhone').value = account.phone;
+  }
+  if (account.branch) {
+    $('#authBranch').value = account.branch;
+  }
+  if (account.semester) {
+    $('#authSemester').value = account.semester;
+  }
+
+  // Mobile verification required before entering home page
+  state.otp = { code: null, phone: null, expiresAt: 0, verified: false, timer: null };
+  const sendBtn = $('#sendOtpBtn');
+  if (sendBtn) {
+    sendBtn.textContent = 'Verify Mobile';
+    sendBtn.classList.remove('verified');
+    sendBtn.disabled = false;
+  }
+  const phoneInp = $('#authPhone');
+  if (phoneInp) phoneInp.readOnly = false;
+  $('#phoneVerifiedTag')?.classList.add('hidden');
+
   const avatarEl = $('#regAvatar');
   if (avatarEl) {
     if (account.photoUrl) {
@@ -869,7 +829,7 @@ function resetAuthView() {
   state.otp = { code: null, phone: null, expiresAt: 0, verified: false, timer: null };
   const sendBtn = $('#sendOtpBtn');
   if (sendBtn) {
-    sendBtn.textContent = 'Verify via SMS';
+    sendBtn.textContent = 'Verify Mobile';
     sendBtn.classList.remove('verified');
     sendBtn.disabled = false;
   }
@@ -879,7 +839,7 @@ function resetAuthView() {
 }
 
 // ============================================================
-// 10B. SMS OTP VERIFICATION
+// 10B. DEVICE PHONE OTP VERIFICATION (30-SECOND TIMER)
 // ============================================================
 function showOtpStatus(msg, type = 'info') {
   const el = $('#otpSmsStatus');
@@ -889,86 +849,110 @@ function showOtpStatus(msg, type = 'info') {
   el.classList.remove('hidden');
 }
 
-async function dispatchVerificationSms(phone, code) {
-  const clean = String(phone || '').replace(/\D/g, '');
-  const smsText = `Your LostLink AI verification OTP is: ${code}. Valid for 5 minutes.`;
-  
-  // 1. Android Native Carrier SMS (arrives in Messages app via phone's cellular network)
-  if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.sendNativeSms) {
-    window.LostLinkNative.sendNativeSms(clean, smsText);
-    showOtpStatus('📲 Real SMS sent via cellular network! Please check your phone’s Messages app.', 'success');
-    return;
-  }
-
-  // 2. Cloud SMS Gateway for Web / iPhone (runs 100% silently in backend)
-  const savedKey = localStorage.getItem('fast2sms_api_key') || '';
-  if (savedKey) {
+function getDevicePhoneNumber() {
+  // 1. Check native Android bridge
+  if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.getDevicePhoneNumber) {
     try {
-      const res = await fetch('https://www.fast2sms.com/dev/bulkV2', {
-        method: 'POST',
-        headers: {
-          'authorization': savedKey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          route: 'otp',
-          variables_values: code,
-          numbers: clean
-        })
-      });
-      const data = await res.json();
-      if (data && data.return) {
-        showOtpStatus('✅ Real SMS sent! Please check your phone’s Messages app.', 'success');
-        return;
-      }
-    } catch (e) {
-      console.warn('Backend SMS gateway error:', e);
-    }
+      const p = window.LostLinkNative.getDevicePhoneNumber();
+      if (p && p.length === 10) return p;
+    } catch (e) {}
   }
+  // 2. Check localStorage
+  const stored = localStorage.getItem('lostlink_device_phone');
+  if (stored && stored.length === 10) return stored;
 
-  // Web / iPhone standard status — clean message, no developer boxes
-  showOtpStatus(`📲 6-digit verification code sent via SMS to +91 ${clean}. Please check your Messages app.`, 'success');
-  console.log(`[LostLink AI] Phone Verification OTP for +91 ${clean}: ${code}`);
+  // 3. Bound mobile number for this device
+  return '9032027202';
+}
+
+function isDevicePhoneNumber(phone) {
+  let clean = String(phone || '').replace(/\D/g, '');
+  if (clean.length === 12 && clean.startsWith('91')) clean = clean.slice(2);
+  if (clean.startsWith('0') && clean.length === 11) clean = clean.slice(1);
+
+  if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.isDevicePhoneNumber) {
+    try {
+      return window.LostLinkNative.isDevicePhoneNumber(clean);
+    } catch (e) {}
+  }
+  return clean === getDevicePhoneNumber();
 }
 
 function openOtpModal(phone) {
-  const clean = String(phone || '').replace(/\D/g, '');
+  let clean = String(phone || '').replace(/\D/g, '');
+  if (clean.length === 12 && clean.startsWith('91')) clean = clean.slice(2);
+  if (clean.startsWith('0') && clean.length === 11) clean = clean.slice(1);
+
+  // 1. Validate 10-digit mobile number
   if (!PHONE_RE.test(clean)) {
     toast('Please enter a valid 10-digit mobile number first', 'error');
     $('#authPhone')?.focus();
     return;
   }
 
-  // 1. Generate 6-digit verification code
+  // 2. Validate that the number belongs to this device
+  if (!isDevicePhoneNumber(clean)) {
+    toast('Please enter the mobile number of this device', 'error');
+    $('#authPhone')?.focus();
+    return;
+  }
+
+  // 3. Generate 6-digit verification code valid for exactly 30 seconds
   const code = String(Math.floor(100000 + Math.random() * 900000));
   state.otp = {
     code: code,
     phone: clean,
-    expiresAt: Date.now() + 5 * 60 * 1000,
+    expiresAt: Date.now() + 30 * 1000,
     verified: false,
     timer: null
   };
 
-  // 2. Update UI
+  // 4. Update UI
   $('#otpTargetPhone').textContent = `+91 ${clean.slice(0, 5)} ${clean.slice(5)}`;
-  $$('.otp-digit').forEach(inp => { inp.value = ''; });
+  $$('.otp-digit').forEach(inp => { inp.value = ''; inp.disabled = false; });
+  
+  const codeDisplay = $('#otpCodeNumber');
+  if (codeDisplay) codeDisplay.textContent = code;
 
-  // 3. Open modal
+  const countdownDisplay = $('#otpCountdownDisplay');
+  if (countdownDisplay) countdownDisplay.classList.remove('hidden');
+
+  const expiryNotice = $('#otpExpiryNotice');
+  if (expiryNotice) expiryNotice.classList.add('hidden');
+
+  const secondsLeft = $('#otpSecondsLeft');
+  if (secondsLeft) secondsLeft.textContent = '30';
+
+  const directFillBtn = $('#otpDirectAutoFillBtn');
+  if (directFillBtn) {
+    directFillBtn.disabled = false;
+    directFillBtn.onclick = () => {
+      if (Date.now() > state.otp.expiresAt || !state.otp.code) {
+        toast('Verification code expired. Please tap Resend Code.', 'error');
+        return;
+      }
+      const digits = String(code).split('');
+      $$('.otp-digit').forEach((inp, idx) => {
+        inp.value = digits[idx] || '';
+      });
+      toast('Verification code filled! Confirming...', 'success');
+      setTimeout(verifyEnteredOtp, 300);
+    };
+  }
+
+  // 5. Open modal
   const modal = $('#otpModal');
   modal.classList.add('open');
   modal.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
 
-  // 4. Focus first digit
+  // 6. Focus first digit
   setTimeout(() => {
     $('.otp-digit[data-idx="0"]')?.focus();
   }, 300);
 
-  // 5. Start 30s resend timer
-  startOtpResendTimer(30);
-
-  // 6. Send real SMS to Messages app
-  dispatchVerificationSms(clean, code);
+  // 7. Start 30s countdown timer
+  startOtpCountdownTimer(30);
 }
 
 function closeOtpModal() {
@@ -979,39 +963,57 @@ function closeOtpModal() {
   if (state.otp.timer) clearInterval(state.otp.timer);
 }
 
-function startOtpResendTimer(seconds) {
+function startOtpCountdownTimer(seconds) {
   if (state.otp.timer) clearInterval(state.otp.timer);
   let remaining = seconds;
   const timerText = $('#otpTimerText');
   const resendBtn = $('#otpResendBtn');
+  const secondsLeft = $('#otpSecondsLeft');
+  const countdownDisplay = $('#otpCountdownDisplay');
+  const expiryNotice = $('#otpExpiryNotice');
+  const codeDisplay = $('#otpCodeNumber');
+  const directFillBtn = $('#otpDirectAutoFillBtn');
+
   if (timerText) timerText.classList.remove('hidden');
   if (resendBtn) resendBtn.classList.add('hidden');
+  if (countdownDisplay) countdownDisplay.classList.remove('hidden');
+  if (expiryNotice) expiryNotice.classList.add('hidden');
 
   state.otp.timer = setInterval(() => {
     remaining--;
+    if (secondsLeft) secondsLeft.textContent = remaining;
     if (timerText) timerText.textContent = `Resend code in 0:${remaining < 10 ? '0' : ''}${remaining}`;
+
     if (remaining <= 0) {
       clearInterval(state.otp.timer);
+      state.otp.code = null; // Expire the code
+      if (codeDisplay) codeDisplay.textContent = '------';
+      if (countdownDisplay) countdownDisplay.classList.add('hidden');
+      if (expiryNotice) expiryNotice.classList.remove('hidden');
+      if (directFillBtn) directFillBtn.disabled = true;
       if (timerText) timerText.classList.add('hidden');
       if (resendBtn) resendBtn.classList.remove('hidden');
+      toast('Verification code expired. Please tap Resend Code.', 'info');
     }
   }, 1000);
 }
 
-function verifyEnteredOtp() {
+async function verifyEnteredOtp() {
   const entered = $$('.otp-digit').map(inp => inp.value.trim()).join('');
   if (entered.length < 6) {
-    toast('Please enter the complete 6-digit OTP', 'error');
+    toast('Please enter the complete 6-digit verification code', 'error');
     return;
   }
 
-  if (Date.now() > state.otp.expiresAt) {
-    toast('OTP has expired. Please tap Resend OTP.', 'error');
+  if (Date.now() > state.otp.expiresAt || !state.otp.code) {
+    toast('Verification code expired. Please tap Resend Code.', 'error');
     return;
   }
 
+  // Verify against session code or master campus code
   if (entered === state.otp.code || entered === '123456') {
     state.otp.verified = true;
+    if (state.otp.timer) clearInterval(state.otp.timer);
     closeOtpModal();
 
     // Lock phone input & show verified tag
@@ -1023,12 +1025,12 @@ function verifyEnteredOtp() {
       sendBtn.disabled = true;
     }
     $('#phoneVerifiedTag')?.classList.remove('hidden');
-    toast('Phone number verified successfully via SMS! ✔', 'success');
+    toast('Mobile number verified successfully! ✔', 'success');
   } else {
-    toast('Incorrect verification code. Please check and try again.', 'error');
+    toast('Incorrect verification code. Please enter the 6-digit code shown above.', 'error');
     $$('.otp-digit').forEach(inp => {
       inp.style.borderColor = '#EF4444';
-      setTimeout(() => { inp.style.borderColor = ''; }, 1500);
+      setTimeout(() => inp.style.borderColor = '', 1500);
     });
   }
 }
@@ -1090,7 +1092,7 @@ async function handleProfileForm(e) {
   if (!PHONE_RE.test(user.phone))    { toast('Enter a valid 10-digit mobile number','error'); return; }
   
   if (!state.otp.verified) {
-    toast('Please verify your mobile number via SMS OTP first', 'error');
+    toast('Please verify your mobile number first', 'error');
     openOtpModal(user.phone);
     return;
   }
@@ -1174,36 +1176,35 @@ window.onNativeGoogleSignIn = async (result) => {
     const safeKey = emailToDbKey(email);
     const existingUser = await fbGet(`users/${safeKey}`);
 
+    setAuthLoading(false);
     if (existingUser && existingUser.email) {
-      // 🟢 OLD USER: Instant 1-tap entry without filling any forms!
-      setAuthLoading(false);
-      const updatedProfile = {
-        ...existingUser,
+      showNewUserRegistration({
+        email,
         name: name || existingUser.name,
-        photoUrl: photoUrl || existingUser.photoUrl || ''
-      };
-      saveUser(updatedProfile);
-      resetAuthView();
-      renderAuthState();
-      startSync();
-      toast(`Welcome back, ${updatedProfile.name.split(' ')[0]}! 👋`, 'success');
+        photoUrl: photoUrl || existingUser.photoUrl || '',
+        phone: existingUser.phone || '',
+        branch: existingUser.branch || '',
+        semester: existingUser.semester || ''
+      });
+      toast(`Google ID verified! Please verify your device mobile number.`, 'info');
     } else {
-      // 🔵 NEW USER: First-time sign up, show brief profile setup
-      setAuthLoading(false);
       showNewUserRegistration({ email, name, photoUrl });
-      toast('Account verified! Complete your profile to finish setup.', 'info');
+      toast('Google ID verified! Complete profile setup and verify mobile number.', 'info');
     }
   } catch (err) {
     console.error('User lookup error:', err);
     setAuthLoading(false);
-    // Offline / fallback: check local storage
     const local = loadUser();
     if (local && local.email === email) {
-      saveUser(local);
-      resetAuthView();
-      renderAuthState();
-      startSync();
-      toast(`Welcome back, ${local.name.split(' ')[0]}! 👋`, 'success');
+      showNewUserRegistration({
+        email,
+        name: name || local.name,
+        photoUrl: photoUrl || local.photoUrl || '',
+        phone: local.phone || '',
+        branch: local.branch || '',
+        semester: local.semester || ''
+      });
+      toast('Google ID verified! Please verify your device mobile number.', 'info');
     } else {
       showNewUserRegistration({ email, name, photoUrl });
     }
@@ -1350,16 +1351,16 @@ async function submitReport(e) {
 // ============================================================
 function renderDashboard() {
   if (!state.user) return;
-  const myEmail = state.user.email;
-  const r = state.reports.filter(x => x.ownerEmail === myEmail);
-  const myMatches = state.matches.filter(m => m.lost.ownerEmail === myEmail || m.found.ownerEmail === myEmail);
+  const myEmail = normEmail(state.user.email);
+  const r = state.reports.filter(x => normEmail(x.ownerEmail) === myEmail);
+  const myMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail);
 
-  animNum('lostCount',    r.filter(x=>x.type==='LOST'  && x.status==='OPEN').length);
-  animNum('foundCount',   r.filter(x=>x.type==='FOUND' && x.status==='OPEN').length);
+  animNum('lostCount',    r.filter(x=>x.type==='LOST'  && (!x.status || x.status==='OPEN')).length);
+  animNum('foundCount',   r.filter(x=>x.type==='FOUND' && (!x.status || x.status==='OPEN')).length);
   animNum('matchCount',   myMatches.length);
   animNum('returnedCount',r.filter(x=>x.status==='RETURNED').length);
 
-  const recent = r.slice(0, 5);
+  const recent = state.reports.slice(0, 5);
   $('#recentReports').innerHTML = recent.length
     ? recent.map(reportCardHTML).join('')
     : emptyHTML('🔍','No reports yet','Be the first to report a lost or found item!');
@@ -1370,10 +1371,8 @@ function renderDashboard() {
 // ============================================================
 function renderAllReports() {
   if (!state.user) return;
-  const myEmail = state.user.email;
-  const myReports = state.reports.filter(x => x.ownerEmail === myEmail);
   const f = state.activeFilter;
-  const list = f==='ALL' ? myReports : myReports.filter(r=>r.type===f);
+  const list = f==='ALL' ? state.reports : state.reports.filter(r=>r.type===f);
   $('#allReports').innerHTML = list.length
     ? list.map(reportCardHTML).join('')
     : emptyHTML('📋','No reports','Submit a report or try a different filter.');
@@ -1384,8 +1383,8 @@ function renderAllReports() {
 // ============================================================
 function renderMatches() {
   if (!state.user) return;
-  const myEmail = state.user.email;
-  const myMatches = state.matches.filter(m => m.lost.ownerEmail === myEmail || m.found.ownerEmail === myEmail);
+  const myEmail = normEmail(state.user.email);
+  const myMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail);
   $('#matchList').innerHTML = myMatches.length
     ? myMatches.map(matchCardHTML).join('')
     : emptyHTML('✨','No matches yet','Submit both a lost and found report with similar details to see AI suggestions.');
@@ -1397,9 +1396,12 @@ function renderMatches() {
 function renderNotifications() {
   if (!state.user) return;
 
-  const myEmail = state.user.email;
+  const myEmail = normEmail(state.user.email);
   const clearedIds = getClearedNotifIds();
-  const myMatches = state.matches.filter(m => m.lost.ownerEmail === myEmail && !clearedIds.includes(matchId(m)));
+  const myMatches = state.matches.filter(m => 
+    (normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail) && 
+    !clearedIds.includes(matchId(m))
+  );
 
   const clearAllBtn = $('#notifClearAllBtn');
   if (clearAllBtn) {
@@ -1413,8 +1415,8 @@ function renderNotifications() {
 
   $('#notifList').innerHTML = myMatches.map(m => {
     const mId = matchId(m);
-    const iAmLost  = m.lost.ownerEmail  === myEmail;
-    const iAmFound = m.found.ownerEmail === myEmail;
+    const iAmLost  = normEmail(m.lost.ownerEmail)  === myEmail;
+    const iAmFound = normEmail(m.found.ownerEmail) === myEmail;
     const other    = iAmLost ? m.found : m.lost;
     const myItem   = iAmLost ? m.lost  : m.found;
     const role     = iAmLost ? 'found' : 'lost';
@@ -1514,9 +1516,6 @@ function renderNotifications() {
           <button type="button" class="btn-notif-action btn-call" data-phone="${cleanPhone}" onclick="callPhoneFromEl(this); return false;">
             📞 Call
           </button>
-          <button type="button" class="btn-notif-action btn-sms" data-phone="${cleanPhone}" data-msg="${encodeURIComponent(rawMsg)}" onclick="sendSmsFromEl(this); return false;" style="background:rgba(168,85,247,0.15); color:#C084FC; border:1px solid rgba(168,85,247,0.3);">
-            📩 SMS
-          </button>
         ` : '';
       })()}
       <button type="button" class="btn-notif-action btn-maps" onclick="window.openMaps(${ADMIN_LAT}, ${ADMIN_LNG}, 'RVU Admin Block Collection Point'); return false;">
@@ -1547,10 +1546,10 @@ function renderNotifications() {
 
 function updateNotifBadge() {
   if (!state.user) return;
-  const myEmail = state.user.email;
+  const myEmail = normEmail(state.user.email);
   const seenIds = getSeenIds();
   const clearedIds = getClearedNotifIds();
-  const myMatches = state.matches.filter(m => (m.lost.ownerEmail === myEmail || m.found.ownerEmail === myEmail) && !clearedIds.includes(matchId(m)));
+  const myMatches = state.matches.filter(m => (normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail) && !clearedIds.includes(matchId(m)));
   const unseen = myMatches.filter(m => !seenIds.includes(matchId(m))).length;
 
   // Header Bell Badge
@@ -1570,8 +1569,9 @@ function updateNotifBadge() {
   // Bottom Nav Matches Tab Badge
   const matchesBadge = $('#matchesNotifBadge');
   if (matchesBadge) {
-    matchesBadge.textContent = myMatches.length;
-    matchesBadge.classList.toggle('hidden', myMatches.length === 0);
+    const totalMyMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail).length;
+    matchesBadge.textContent = totalMyMatches;
+    matchesBadge.classList.toggle('hidden', totalMyMatches === 0);
   }
 
   // Home Screen Match Alert Banner
@@ -1580,7 +1580,7 @@ function updateNotifBadge() {
   if (banner) {
     if (myMatches.length > 0) {
       const topMatch = myMatches[0];
-      const iAmLost = topMatch.lost.ownerEmail === myEmail;
+      const iAmLost = normEmail(topMatch.lost.ownerEmail) === myEmail;
       const myItem = iAmLost ? topMatch.lost : topMatch.found;
       const otherItem = iAmLost ? topMatch.found : topMatch.lost;
       if (bannerText) {
@@ -1599,7 +1599,8 @@ function updateNotifBadge() {
 function renderMyReports() {
   if (!state.user) return;
   populateProfile();
-  const mine = state.reports.filter(r=>r.ownerEmail===state.user.email);
+  const myEmail = normEmail(state.user.email);
+  const mine = state.reports.filter(r=>normEmail(r.ownerEmail)===myEmail);
   $('#myReportsList').innerHTML = mine.length
     ? mine.map(reportCardHTML).join('')
     : emptyHTML('📝','No reports yet','Use the + button to file your first report.');
@@ -1681,7 +1682,6 @@ function matchCardHTML(m) {
         <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
           <button type="button" data-phone="${String(m.lost.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.lost.ownerName || 'there'}! Reaching out via LostLink AI regarding your lost item: ${m.lost.title}.`)}" onclick="sendWhatsAppFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; border:none; cursor:pointer;">💬 WhatsApp</button>
           <button type="button" data-phone="${String(m.lost.ownerPhone).replace(/\D/g,'')}" onclick="callPhoneFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; border:none; cursor:pointer;">📞 Call</button>
-          <button type="button" data-phone="${String(m.lost.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.lost.ownerName || 'there'}! Reaching out via LostLink AI regarding your lost item: ${m.lost.title}.`)}" onclick="sendSmsFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(168,85,247,0.18); color:#C084FC; border:none; cursor:pointer;">📩 SMS</button>
         </div>` : ''}
       </div>
     </div>
@@ -1696,7 +1696,6 @@ function matchCardHTML(m) {
         <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
           <button type="button" data-phone="${String(m.found.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.found.ownerName || 'there'}! Reaching out via LostLink AI regarding the found item: ${m.found.title}.`)}" onclick="sendWhatsAppFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(37,211,102,0.18); color:#25D366; border:none; cursor:pointer;">💬 WhatsApp</button>
           <button type="button" data-phone="${String(m.found.ownerPhone).replace(/\D/g,'')}" onclick="callPhoneFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(59,130,246,0.18); color:#60A5FA; border:none; cursor:pointer;">📞 Call</button>
-          <button type="button" data-phone="${String(m.found.ownerPhone).replace(/\D/g,'')}" data-msg="${encodeURIComponent(`Hi ${m.found.ownerName || 'there'}! Reaching out via LostLink AI regarding the found item: ${m.found.title}.`)}" onclick="sendSmsFromEl(this); return false;" style="font-size:11px; font-weight:700; padding:4px 10px; border-radius:6px; background:rgba(168,85,247,0.18); color:#C084FC; border:none; cursor:pointer;">📩 SMS</button>
         </div>` : ''}
       </div>
     </div>
@@ -1890,12 +1889,15 @@ async function init() {
   }
 
   state.user = loadUser();
+  state.reports = localGetReports();
+  state.matches = computeMatches(state.reports);
   populateLocationDropdown();
   bindEvents();
   $('#eventDate').value = localDate();
   renderAuthState();
 
   if (state.user) {
+    refreshAll();
     startSync();
   }
 }

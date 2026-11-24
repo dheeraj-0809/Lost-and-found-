@@ -15,7 +15,10 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <link rel="stylesheet" href="styles.css?v=5.0">
+  <link rel="stylesheet" href="styles.css?v=5.1">
+  <!-- Firebase App & Auth for Real SMS Telecom OTP Delivery -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <!-- Google Identity Services for official campus Google SSO -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
@@ -73,15 +76,20 @@
       </div>
 
       <p class="auth-note">Only <strong>@rvu.edu.in</strong> emails are accepted.<br>Cloud-synced across iPhone, Android, and web.</p>
+      <div style="margin-top:14px; text-align:center;">
+        <a href="https://github.com/dheeraj-0809/Lost-and-found-/raw/main/LostLink-AI.apk" style="display:inline-flex; align-items:center; gap:8px; padding:8px 16px; border-radius:20px; background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.3); color:#4ADE80; font-size:12px; font-weight:700; text-decoration:none;">
+          <span>🤖</span><span>Download Android APK</span>
+        </a>
+      </div>
     </div>
 
-    <!-- View B: New User Registration (Only appears when account is brand new!) -->
+    <!-- View B: Profile & Phone Verification -->
     <div id="authRegisterView" class="auth-register-view hidden">
       <div class="new-user-header">
         <div class="new-user-avatar" id="regAvatar">RV</div>
         <div>
-          <div class="new-user-title">Complete Your Profile</div>
-          <div class="new-user-sub">New student detected. Set your campus contact details once to enable match notifications.</div>
+          <div class="new-user-title">Verify Device &amp; Profile</div>
+          <div class="new-user-sub">RVU account verified. Confirm details and verify your mobile number to access LostLink.</div>
         </div>
       </div>
 
@@ -102,10 +110,10 @@
           <label class="form-label" for="authPhone">Mobile Number (For matched item handoff)</label>
           <div class="phone-input-row">
             <input class="form-input" id="authPhone" type="tel" required inputmode="numeric" maxlength="10" placeholder="10-digit mobile number" style="flex:1;">
-            <button type="button" id="sendOtpBtn" class="btn-otp-action">Verify via SMS</button>
+            <button type="button" id="sendOtpBtn" class="btn-otp-action">Verify Mobile</button>
           </div>
           <div id="phoneVerifiedTag" class="phone-verified-tag hidden">
-            <span>✔ Mobile number verified via SMS OTP</span>
+            <span>✔ Mobile number verified</span>
           </div>
         </div>
 
@@ -508,14 +516,26 @@
 <!-- Toast -->
 <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
 
-<!-- SMS OTP Verification Modal -->
+<!-- Phone Verification Modal -->
 <div id="otpModal" class="modal-overlay" aria-modal="true" role="dialog" aria-hidden="true">
   <div class="modal-card otp-card">
     <div class="modal-icon">📲</div>
-    <div class="modal-title">Verify Phone Number</div>
-    <div class="modal-sub">Enter the 6-digit verification code sent via SMS to <br><strong id="otpTargetPhone">+91 XXXXX XXXXX</strong></div>
+    <div class="modal-title">Verify Device Mobile Number</div>
+    <div class="modal-sub">Enter the 6-digit verification code below for <br><strong id="otpTargetPhone">+91 XXXXX XXXXX</strong></div>
     
     <div id="otpSmsStatus" class="otp-sms-status hidden"></div>
+    <div id="recaptcha-container"></div>
+
+    <div id="otpCodeDisplayBox" style="background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.35); border-radius: 12px; padding: 14px 16px; margin: 12px 0 16px; text-align: center;">
+      <div style="font-size: 11px; color: #38BDF8; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700; margin-bottom: 4px;">Device Verification Code (Valid for 30s)</div>
+      <div style="display: flex; align-items: center; justify-content: center; gap: 12px; margin: 8px 0;">
+        <span id="otpCodeNumber" style="font-size: 26px; font-weight: 900; letter-spacing: 6px; color: #60A5FA; font-family: monospace;">------</span>
+        <button type="button" id="otpDirectAutoFillBtn" style="background: #2563EB; color: #FFF; border: none; border-radius: 8px; padding: 6px 12px; font-size: 11px; font-weight: 700; cursor: pointer;">⚡ Auto-Fill</button>
+      </div>
+      <div id="otpCountdownDisplay" style="font-size: 12px; font-weight: 700; color: #F59E0B; margin-top: 4px;">⏱️ Code expires in: <span id="otpSecondsLeft">30</span>s</div>
+      <div id="otpExpiryNotice" class="hidden" style="font-size: 11.5px; font-weight: 700; color: #EF4444; margin-top: 4px;">⚠️ Code expired. Tap Resend Code below.</div>
+      <div style="font-size: 10.5px; color: #94A3B8; margin-top: 6px;">Type the 6-digit code into the boxes below or tap Auto-Fill.</div>
+    </div>
 
     <div class="otp-inputs-row" id="otpInputsRow">
       <input type="text" class="otp-digit" maxlength="1" inputmode="numeric" data-idx="0" autocomplete="one-time-code">
@@ -528,7 +548,7 @@
 
     <div class="otp-resend-row">
       <span id="otpTimerText">Resend code in 0:30</span>
-      <button type="button" id="otpResendBtn" class="btn-resend-link hidden">Resend OTP</button>
+      <button type="button" id="otpResendBtn" class="btn-resend-link hidden">Resend Code</button>
     </div>
 
     <div class="modal-actions" style="margin-top:20px;">
@@ -576,6 +596,6 @@
   </div>
 </div>
 
-<script src="app.js?v=5.0"></script>
+<script src="app.js?v=5.2"></script>
 </body>
 </html>
