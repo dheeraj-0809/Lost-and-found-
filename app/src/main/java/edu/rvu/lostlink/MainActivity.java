@@ -3,6 +3,7 @@ package edu.rvu.lostlink;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -11,6 +12,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.telephony.SmsManager;
+import android.telephony.SubscriptionInfo;
+import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 import android.util.Base64;
 import android.view.View;
 import android.webkit.WebChromeClient;
@@ -23,7 +27,12 @@ import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
+import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest;
+import com.google.android.gms.auth.api.identity.Identity;
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
 import com.google.android.gms.auth.api.signin.GoogleSignInClient;
@@ -50,10 +59,13 @@ public final class MainActivity extends Activity {
 
     private static final int RC_PHOTO       = 1001;
     private static final int RC_GOOGLE_SIGN = 1002;
+    private static final int RC_PHONE_PERM  = 1003;
+    private static final int RC_PHONE_HINT  = 1004;
 
     private WebView          webView;
     private ProgressBar      progressBar;
     private GoogleSignInClient googleClient;
+    private String           pendingSimVerifyPhone = null;
 
     // -------------------------------------------------------------------------
     // Lifecycle
@@ -353,16 +365,209 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private static final class SimCheckInfo {
+        int activeSimCount = 0;
+        boolean simHardwareReady = false;
+        final Set<String> simNumbers = new LinkedHashSet<>();
+    }
+
+    private String normalizeIndian10(String raw) {
+        if (raw == null) return "";
+        String digits = raw.replaceAll("[^0-9]", "");
+        if (digits.length() == 12 && digits.startsWith("91")) {
+            digits = digits.substring(2);
+        } else if (digits.length() == 11 && digits.startsWith("0")) {
+            digits = digits.substring(1);
+        } else if (digits.length() > 10) {
+            digits = digits.substring(digits.length() - 10);
+        }
+        if (digits.length() == 10 && digits.matches("^[6-9]\\d{9}$")) {
+            return digits;
+        }
+        return "";
+    }
+
+    @SuppressLint({"MissingPermission", "HardwareIds"})
+    private SimCheckInfo inspectDeviceSims() {
+        SimCheckInfo info = new SimCheckInfo();
+        TelephonyManager tm = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+        SubscriptionManager sm = (SubscriptionManager) getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+
+        boolean hasStatePerm = checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
+        boolean hasNumPerm = checkSelfPermission(Manifest.permission.READ_PHONE_NUMBERS) == PackageManager.PERMISSION_GRANTED;
+
+        if (sm != null && (hasStatePerm || hasNumPerm)) {
+            try {
+                List<SubscriptionInfo> subs = sm.getActiveSubscriptionInfoList();
+                if (subs != null) {
+                    info.activeSimCount = subs.size();
+                    for (SubscriptionInfo sub : subs) {
+                        String num = "";
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && hasNumPerm) {
+                            try {
+                                num = normalizeIndian10(sm.getPhoneNumber(sub.getSubscriptionId()));
+                            } catch (Exception ignored) {}
+                        }
+                        if (num.isEmpty()) {
+                            try {
+                                num = normalizeIndian10(sub.getNumber());
+                            } catch (Exception ignored) {}
+                        }
+                        if (num.isEmpty() && tm != null) {
+                            try {
+                                TelephonyManager subTm = tm.createForSubscriptionId(sub.getSubscriptionId());
+                                if (subTm != null) {
+                                    num = normalizeIndian10(subTm.getLine1Number());
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                        if (!num.isEmpty()) {
+                            info.simNumbers.add(num);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        if (tm != null) {
+            try {
+                int simState = tm.getSimState();
+                info.simHardwareReady = (simState != TelephonyManager.SIM_STATE_ABSENT
+                        && simState != TelephonyManager.SIM_STATE_UNKNOWN);
+                if (!info.simHardwareReady && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    int s0 = tm.getSimState(0);
+                    int s1 = tm.getSimState(1);
+                    if ((s0 != TelephonyManager.SIM_STATE_ABSENT && s0 != TelephonyManager.SIM_STATE_UNKNOWN)
+                            || (s1 != TelephonyManager.SIM_STATE_ABSENT && s1 != TelephonyManager.SIM_STATE_UNKNOWN)) {
+                        info.simHardwareReady = true;
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            if (hasNumPerm || hasStatePerm) {
+                try {
+                    String line1 = normalizeIndian10(tm.getLine1Number());
+                    if (!line1.isEmpty()) {
+                        info.simNumbers.add(line1);
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        return info;
+    }
+
     public String getDevicePhoneNumber() {
-        android.content.SharedPreferences prefs = getSharedPreferences("lostlink_prefs", MODE_PRIVATE);
-        return prefs.getString("device_phone", "9032027202");
+        SimCheckInfo info = inspectDeviceSims();
+        if (!info.simNumbers.isEmpty()) {
+            return info.simNumbers.iterator().next();
+        }
+        return "";
     }
 
     public boolean isDevicePhoneNumber(String phone) {
-        if (phone == null) return false;
-        String clean = phone.replaceAll("[^0-9]", "");
-        if (clean.length() == 12 && clean.startsWith("91")) clean = clean.substring(2);
-        return clean.equals(getDevicePhoneNumber());
+        String clean = normalizeIndian10(phone);
+        if (clean.isEmpty()) return false;
+        SimCheckInfo info = inspectDeviceSims();
+        return info.simNumbers.contains(clean);
+    }
+
+    public void verifyDeviceSimPhone(String phone) {
+        String clean = normalizeIndian10(phone);
+        if (clean.isEmpty()) {
+            notifySimVerifyResult(false, "INVALID_FORMAT", "Please enter a valid 10-digit Indian (+91) mobile number.");
+            return;
+        }
+        pendingSimVerifyPhone = clean;
+
+        boolean hasStatePerm = checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
+        boolean hasNumPerm = checkSelfPermission(Manifest.permission.READ_PHONE_NUMBERS) == PackageManager.PERMISSION_GRANTED;
+
+        if (!hasStatePerm || !hasNumPerm) {
+            requestPermissions(
+                    new String[]{ Manifest.permission.READ_PHONE_NUMBERS, Manifest.permission.READ_PHONE_STATE },
+                    RC_PHONE_PERM
+            );
+            return;
+        }
+        performSimVerification(clean);
+    }
+
+    private void performSimVerification(String clean) {
+        SimCheckInfo info = inspectDeviceSims();
+        boolean hasStatePerm = checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
+
+        // 1. Ensure an active SIM is physically/eSIM present in this device
+        if (!info.simHardwareReady && (!hasStatePerm || info.activeSimCount == 0)) {
+            pendingSimVerifyPhone = null;
+            notifySimVerifyResult(false, "NO_SIM", "No active SIM card detected in this device. Please insert the SIM card for +91 " + clean + " and try again.");
+            return;
+        }
+        if (hasStatePerm && info.activeSimCount == 0 && !info.simHardwareReady) {
+            pendingSimVerifyPhone = null;
+            notifySimVerifyResult(false, "NO_SIM", "No active SIM card detected in this device. Please insert your SIM card first.");
+            return;
+        }
+
+        // 2. Direct match against SIM slot phone number(s)
+        if (info.simNumbers.contains(clean)) {
+            pendingSimVerifyPhone = null;
+            notifySimVerifyResult(true, "SIM_MATCH", clean);
+            return;
+        }
+
+        // 3. If all active SIM slots exposed their numbers and none matched, reject immediately
+        if (info.activeSimCount > 0 && info.simNumbers.size() >= info.activeSimCount && !info.simNumbers.isEmpty()) {
+            pendingSimVerifyPhone = null;
+            notifySimVerifyResult(false, "MISMATCH", "Enter the correct mobile number linked to the SIM in this device.");
+            return;
+        }
+
+        // 4. Fallback for carriers (e.g. Jio/Airtel) that leave SIM EF_MSISDN blank:
+        //    Verify using Google Play Services Phone Number Hint API (reads device-verified SIM numbers)
+        try {
+            GetPhoneNumberHintIntentRequest request = GetPhoneNumberHintIntentRequest.builder().build();
+            Identity.getSignInClient(this)
+                    .getPhoneNumberHintIntent(request)
+                    .addOnSuccessListener(pendingIntent -> {
+                        try {
+                            startIntentSenderForResult(pendingIntent.getIntentSender(), RC_PHONE_HINT, null, 0, 0, 0);
+                        } catch (Exception e) {
+                            handleSimHintUnavailable(clean, info);
+                        }
+                    })
+                    .addOnFailureListener(e -> handleSimHintUnavailable(clean, info));
+        } catch (Exception e) {
+            handleSimHintUnavailable(clean, info);
+        }
+    }
+
+    private void handleSimHintUnavailable(String clean, SimCheckInfo info) {
+        pendingSimVerifyPhone = null;
+        if (!info.simNumbers.isEmpty()) {
+            notifySimVerifyResult(false, "MISMATCH", "Enter the correct mobile number linked to the SIM in this device.");
+            return;
+        }
+        boolean hasStatePerm = checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
+        boolean hasNumPerm = checkSelfPermission(Manifest.permission.READ_PHONE_NUMBERS) == PackageManager.PERMISSION_GRANTED;
+        if (!hasStatePerm && !hasNumPerm) {
+            notifySimVerifyResult(false, "PERM_DENIED", "Please allow Phone permission so LostLink AI can verify that this mobile number belongs to the SIM in this device.");
+        } else {
+            notifySimVerifyResult(false, "SIM_UNREADABLE", "Could not match +91 " + clean + " to the SIM in this device. Enter the correct mobile number linked to this device's SIM.");
+        }
+    }
+
+    private void notifySimVerifyResult(boolean ok, String code, String messageOrPhone) {
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("ok", ok);
+            payload.put("code", code);
+            if (ok) {
+                payload.put("phone", messageOrPhone);
+            } else {
+                payload.put("message", messageOrPhone);
+            }
+            evaluateJs("window.onNativeSimVerifyResult && window.onNativeSimVerifyResult(" + payload + ")");
+        } catch (Exception ignored) {}
     }
 
     /**
@@ -501,6 +706,17 @@ public final class MainActivity extends Activity {
     // -------------------------------------------------------------------------
 
     @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == RC_PHONE_PERM) {
+            String target = pendingSimVerifyPhone;
+            if (target != null && !target.isEmpty()) {
+                performSimVerification(target);
+            }
+        }
+    }
+
+    @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
@@ -513,6 +729,29 @@ public final class MainActivity extends Activity {
 
         if (requestCode == RC_GOOGLE_SIGN) {
             handleGoogleSignInResult(GoogleSignIn.getSignedInAccountFromIntent(data));
+            return;
+        }
+
+        if (requestCode == RC_PHONE_HINT) {
+            String target = pendingSimVerifyPhone;
+            pendingSimVerifyPhone = null;
+            if (target == null) return;
+
+            if (resultCode == RESULT_OK && data != null) {
+                try {
+                    String hintRaw = Identity.getSignInClient(this).getPhoneNumberFromIntent(data);
+                    String hintClean = normalizeIndian10(hintRaw);
+                    if (!hintClean.isEmpty() && hintClean.equals(target)) {
+                        notifySimVerifyResult(true, "HINT_MATCH", target);
+                    } else {
+                        notifySimVerifyResult(false, "MISMATCH", "Enter the correct mobile number linked to the SIM in this device.");
+                    }
+                } catch (Exception e) {
+                    notifySimVerifyResult(false, "HINT_ERROR", "Enter the correct mobile number linked to the SIM in this device.");
+                }
+            } else {
+                notifySimVerifyResult(false, "CANCELLED", "SIM verification cancelled. Enter the correct mobile number linked to the SIM in this device.");
+            }
         }
     }
 

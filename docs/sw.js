@@ -1,10 +1,10 @@
 // LostLink AI — Service Worker (Network-First Strategy for Instant Updates)
-const CACHE_NAME = 'lostlink-v5-network-first';
+const CACHE_NAME = 'lostlink-v6-network-first';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
   './styles.css?v=5.0',
-  './app.js?v=5.0',
+  './app.js?v=5.3',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',

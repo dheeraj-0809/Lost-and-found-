@@ -101,4 +101,9 @@ public final class WebAppBridge {
     public boolean isDevicePhoneNumber(String phone) {
         return activity.isDevicePhoneNumber(phone);
     }
+
+    @JavascriptInterface
+    public void verifyDeviceSimPhone(String phone) {
+        activity.runOnUiThread(() -> activity.verifyDeviceSimPhone(phone));
+    }
 }

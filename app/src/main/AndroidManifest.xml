@@ -3,6 +3,9 @@
 
     <!-- Internet required for Google Sign-In and optional cloud sync -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Phone/SIM permissions required to verify entered mobile number matches device SIM -->
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <!-- Query packages to directly launch native WhatsApp, WhatsApp Business, Google Maps, and Dialer -->
     <queries>

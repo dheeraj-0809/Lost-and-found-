@@ -558,6 +558,18 @@
   </div>
 </div>
 
+<!-- SIM Mismatch / Verification Alert Modal -->
+<div id="simMismatchModal" class="modal-overlay" aria-modal="true" role="dialog" aria-hidden="true">
+  <div class="modal-card">
+    <div class="modal-icon">📵</div>
+    <div class="modal-title" id="simMismatchTitle">SIM Number Mismatch</div>
+    <div class="modal-sub" id="simMismatchMsg">Please enter the correct mobile number linked to the SIM card in this device.</div>
+    <div class="modal-actions" style="margin-top:20px;">
+      <button type="button" class="modal-btn modal-btn-confirm" id="simMismatchOkBtn" style="width:100%;">OK, Re-enter Number</button>
+    </div>
+  </div>
+</div>
+
 <!-- Logout Confirmation Modal -->
 <div id="logoutModal" class="modal-overlay" aria-modal="true" role="dialog" aria-hidden="true">
   <div class="modal-card">
@@ -596,6 +608,6 @@
   </div>
 </div>
 
-<script src="app.js?v=5.2"></script>
+<script src="app.js?v=5.3"></script>
 </body>
 </html>

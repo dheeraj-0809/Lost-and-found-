@@ -849,55 +849,105 @@ function showOtpStatus(msg, type = 'info') {
   el.classList.remove('hidden');
 }
 
+function normalizeIndianPhone10(phone) {
+  let clean = String(phone || '').replace(/\D/g, '');
+  if (clean.length === 12 && clean.startsWith('91')) clean = clean.slice(2);
+  if (clean.startsWith('0') && clean.length === 11) clean = clean.slice(1);
+  if (clean.length > 10) clean = clean.slice(-10);
+  return clean;
+}
+
 function getDevicePhoneNumber() {
-  // 1. Check native Android bridge
   if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.getDevicePhoneNumber) {
     try {
       const p = window.LostLinkNative.getDevicePhoneNumber();
       if (p && p.length === 10) return p;
     } catch (e) {}
   }
-  // 2. Check localStorage
-  const stored = localStorage.getItem('lostlink_device_phone');
-  if (stored && stored.length === 10) return stored;
-
-  // 3. Bound mobile number for this device
-  return '9032027202';
+  return '';
 }
 
-function isDevicePhoneNumber(phone) {
-  let clean = String(phone || '').replace(/\D/g, '');
-  if (clean.length === 12 && clean.startsWith('91')) clean = clean.slice(2);
-  if (clean.startsWith('0') && clean.length === 11) clean = clean.slice(1);
-
-  if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.isDevicePhoneNumber) {
-    try {
-      return window.LostLinkNative.isDevicePhoneNumber(clean);
-    } catch (e) {}
+function showSimMismatchPopup(message, title = 'SIM Number Mismatch') {
+  const modal = $('#simMismatchModal');
+  if (modal) {
+    const titleEl = $('#simMismatchTitle');
+    const msgEl = $('#simMismatchMsg');
+    if (titleEl) titleEl.textContent = title;
+    if (msgEl) msgEl.textContent = message || 'Enter the correct mobile number linked to the SIM in this device.';
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  } else {
+    alert(message || 'Enter the correct mobile number linked to the SIM in this device.');
   }
-  return clean === getDevicePhoneNumber();
+  toast(message || 'Enter the correct mobile number linked to the SIM in this device.', 'error');
+}
+
+function closeSimMismatchPopup() {
+  const modal = $('#simMismatchModal');
+  if (modal) {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+  setTimeout(() => $('#authPhone')?.focus(), 150);
 }
 
 function openOtpModal(phone) {
-  let clean = String(phone || '').replace(/\D/g, '');
-  if (clean.length === 12 && clean.startsWith('91')) clean = clean.slice(2);
-  if (clean.startsWith('0') && clean.length === 11) clean = clean.slice(1);
+  const clean = normalizeIndianPhone10(phone);
 
-  // 1. Validate 10-digit mobile number
+  // 1. Validate 10-digit Indian (+91) mobile number
   if (!PHONE_RE.test(clean)) {
-    toast('Please enter a valid 10-digit mobile number first', 'error');
-    $('#authPhone')?.focus();
+    showSimMismatchPopup('Please enter a valid 10-digit Indian (+91) mobile number.', 'Invalid Mobile Number');
     return;
   }
 
-  // 2. Validate that the number belongs to this device
-  if (!isDevicePhoneNumber(clean)) {
-    toast('Please enter the mobile number of this device', 'error');
-    $('#authPhone')?.focus();
+  // Update input with clean 10-digit Indian mobile number
+  const authPhoneInp = $('#authPhone');
+  if (authPhoneInp && authPhoneInp.value.trim() !== clean) {
+    authPhoneInp.value = clean;
+  }
+
+  // 2. On Android APK: verify directly against the active SIM / device-verified phone number
+  if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.verifyDeviceSimPhone) {
+    const sendBtn = $('#sendOtpBtn');
+    if (sendBtn && !state.otp.verified) {
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Checking SIM...';
+    }
+
+    window.onNativeSimVerifyResult = function(res) {
+      if (sendBtn && !state.otp.verified) {
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Verify Mobile';
+      }
+      if (res && res.ok) {
+        launchOtpDisplayModal(res.phone || clean);
+      } else {
+        const msg = (res && res.message) ? res.message : 'Enter the correct mobile number linked to the SIM in this device.';
+        const title = (res && res.code === 'NO_SIM') ? 'No Active SIM Found' : 'SIM Number Mismatch';
+        showSimMismatchPopup(msg, title);
+      }
+    };
+
+    try {
+      window.LostLinkNative.verifyDeviceSimPhone(clean);
+    } catch (e) {
+      if (sendBtn && !state.otp.verified) {
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Verify Mobile';
+      }
+      showSimMismatchPopup('Could not access SIM verification on this device. Please try again.', 'Verification Error');
+    }
     return;
   }
 
-  // 3. Generate 6-digit verification code valid for exactly 30 seconds
+  // 3. On iPhone Safari / Web browser (browsers cannot access SIM hardware due to OS sandboxing)
+  launchOtpDisplayModal(clean);
+}
+
+function launchOtpDisplayModal(clean) {
+  // Generate 6-digit verification code valid for exactly 30 seconds
   const code = String(Math.floor(100000 + Math.random() * 900000));
   state.otp = {
     code: code,
@@ -1076,11 +1126,12 @@ function setupOtpDigitInputs() {
 
 async function handleProfileForm(e) {
   e.preventDefault();
+  const cleanPhone = normalizeIndianPhone10($('#authPhone').value);
   const user = {
     name:          $('#authName').value.trim(),
     email:         $('#authEmail').value.trim().toLowerCase(),
-    phone:         $('#authPhone').value.trim(),
-    phoneVerified: state.otp.verified,
+    phone:         cleanPhone,
+    phoneVerified: state.otp.verified && state.otp.phone === cleanPhone,
     branch:        $('#authBranch').value.trim(),
     semester:      $('#authSemester').value,
     photoUrl:      state.tempGooglePhoto || '',
@@ -1091,7 +1142,7 @@ async function handleProfileForm(e) {
   if (!RVU_EMAIL_RE.test(user.email)) { toast('Only @rvu.edu.in emails accepted','error'); return; }
   if (!PHONE_RE.test(user.phone))    { toast('Enter a valid 10-digit mobile number','error'); return; }
   
-  if (!state.otp.verified) {
+  if (!state.otp.verified || state.otp.phone !== user.phone) {
     toast('Please verify your mobile number first', 'error');
     openOtpModal(user.phone);
     return;
@@ -1776,12 +1827,14 @@ function bindEvents() {
   });
   $('#authCancelBtn')?.addEventListener('click', resetAuthView);
 
-  // SMS OTP Verification
+  // Device SIM & OTP Verification
   $('#sendOtpBtn')?.addEventListener('click', () => openOtpModal($('#authPhone').value.trim()));
   $('#otpCancelBtn')?.addEventListener('click', closeOtpModal);
   $('#otpVerifyBtn')?.addEventListener('click', verifyEnteredOtp);
   $('#otpResendBtn')?.addEventListener('click', () => openOtpModal(state.otp.phone || $('#authPhone').value.trim()));
   $('#otpModal')?.addEventListener('click', (e) => { if (e.target === $('#otpModal')) closeOtpModal(); });
+  $('#simMismatchOkBtn')?.addEventListener('click', closeSimMismatchPopup);
+  $('#simMismatchModal')?.addEventListener('click', (e) => { if (e.target === $('#simMismatchModal')) closeSimMismatchPopup(); });
   $('#homeNotifBtn')?.addEventListener('click', () => navigate('notifications'));
 
   setupOtpDigitInputs();
