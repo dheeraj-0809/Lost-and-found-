@@ -92,17 +92,17 @@ public final class MainActivity extends Activity {
                         .build());
 
         configureWebView();
-        handleDeepLink(getIntent());
+        handleDeepLink(getIntent(), false);
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        handleDeepLink(intent);
+        handleDeepLink(intent, true);
     }
 
-    private void handleDeepLink(Intent intent) {
+    private void handleDeepLink(Intent intent, boolean isNewIntent) {
         if (intent == null || intent.getData() == null) return;
         Uri uri = intent.getData();
         String uriStr = uri.toString();
@@ -111,8 +111,10 @@ public final class MainActivity extends Activity {
             if (fragment == null && uriStr.contains("#")) {
                 fragment = uriStr.substring(uriStr.indexOf('#') + 1);
             }
-            if (fragment != null && !fragment.isEmpty()) {
-                if (webView != null) {
+            if (fragment != null && !fragment.isEmpty() && webView != null) {
+                if (isNewIntent) {
+                    evaluateJs("window.handleOAuthHash && window.handleOAuthHash(" + JSONObject.quote("#" + fragment) + ")");
+                } else {
                     webView.loadUrl("file:///android_asset/index.html#" + fragment);
                 }
             }
@@ -693,7 +695,8 @@ public final class MainActivity extends Activity {
                 "&response_type=token" +
                 "&scope=" + Uri.encode("email profile") +
                 "&prompt=select_account" +
-                "&hd=rvu.edu.in";
+                "&hd=rvu.edu.in" +
+                "&state=native_apk";
         try {
             openWebAuth(authUrl);
         } catch (Exception e) {
@@ -809,7 +812,7 @@ public final class MainActivity extends Activity {
                 if (inputStream != null) inputStream.close();
 
                 if (bitmap != null) {
-                    int maxDim = 800;
+                    int maxDim = 640;
                     int width = bitmap.getWidth();
                     int height = bitmap.getHeight();
                     if (width > maxDim || height > maxDim) {
@@ -820,7 +823,7 @@ public final class MainActivity extends Activity {
                     }
 
                     ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream);
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 68, outputStream);
                     byte[] bytes = outputStream.toByteArray();
                     String base64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
                     String dataUrl = "data:image/jpeg;base64," + base64;

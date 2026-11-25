@@ -553,6 +553,45 @@
   </div>
 </div>
 
+<!-- Instant AI Match Alert Pop-Up Modal -->
+<div id="matchPopupModal" class="modal-overlay" aria-modal="true" role="dialog" aria-hidden="true">
+  <div class="modal-card" style="max-width:410px; max-height:88vh; overflow-y:auto; text-align:left;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:24px;">🎯</span>
+        <div>
+          <div style="font-size:15px; font-weight:800; color:#F8FAFC;">AI Match Found!</div>
+          <div id="matchPopupSub" style="font-size:11.5px; color:#94A3B8;">Instant Campus Match Alert</div>
+        </div>
+      </div>
+      <span id="matchPopupPctBadge" style="font-size:14px; font-weight:900; padding:4px 10px; border-radius:20px; background:rgba(46,213,115,0.18); color:#2ED573;">—%</span>
+    </div>
+
+    <div id="matchPopupReason" style="font-size:12px; color:#CBD5E1; background:rgba(255,255,255,0.04); padding:8px 10px; border-radius:10px; margin-bottom:10px;"></div>
+
+    <div id="matchPopupItems" style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;"></div>
+
+    <div id="matchPopupPhotoWrap" class="hidden" style="margin-bottom:10px; text-align:center;">
+      <img id="matchPopupPhoto" src="" alt="Matched item photo" style="max-width:100%; max-height:170px; border-radius:10px; object-fit:cover; border:1px solid rgba(255,255,255,0.12);" />
+    </div>
+
+    <div id="matchPopupPersonCard" style="background:rgba(59,130,246,0.10); border:1px solid rgba(59,130,246,0.28); border-radius:12px; padding:12px; margin-bottom:12px;">
+      <div id="matchPopupPersonRole" style="font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.6px; color:#60A5FA; margin-bottom:6px;">Matched Person Details</div>
+      <div id="matchPopupPersonInfo" style="font-size:12.5px; line-height:1.55; color:#E2E8F0;"></div>
+      <div id="matchPopupActions" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;"></div>
+    </div>
+
+    <div style="font-size:11px; color:#FBBF24; background:rgba(245,158,11,0.12); padding:7px 10px; border-radius:8px; margin-bottom:12px;">
+      ⭐ Collect only at <strong>RVU Admin Block</strong> after staff verification.
+    </div>
+
+    <div class="modal-actions" style="margin-top:0;">
+      <button type="button" class="modal-btn modal-btn-cancel" id="matchPopupCloseBtn">Close</button>
+      <button type="button" class="modal-btn modal-btn-confirm" id="matchPopupViewAllBtn">Open Notifications</button>
+    </div>
+  </div>
+</div>
+
 <!-- SIM Mismatch / Verification Alert Modal -->
 <div id="simMismatchModal" class="modal-overlay" aria-modal="true" role="dialog" aria-hidden="true">
   <div class="modal-card">
@@ -603,6 +642,6 @@
   </div>
 </div>
 
-<script src="app.js?v=5.3"></script>
+<script src="app.js?v=5.4"></script>
 </body>
 </html>
