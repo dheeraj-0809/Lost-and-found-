@@ -34,10 +34,11 @@ const USER_KEY     = 'll_user_v3';
 const REPORTS_KEY  = 'll_reports_v3';   // local cache
 const SEEN_KEY     = 'll_seen_v3';      // seen notification IDs
 const CLEARED_NOTIFS_KEY = 'll_cleared_notifs_v3'; // cleared notification IDs
+const ALERTED_MATCHES_KEY = 'll_alerted_matches_v3'; // popped-up match alerts
 
 const ADMIN_LAT    = 12.923388382208246;
 const ADMIN_LNG    = 77.49976656532213;
-const SYNC_INTERVAL= 45000; // ms between auto-syncs
+const SYNC_INTERVAL= 5000; // ms between live shallow cloud checks (~490 bytes)
 
 // ============================================================
 // 2. CAMPUS LOCATIONS (37 verified RVU landmarks)
@@ -106,6 +107,8 @@ const state = {
   otp:          { code: null, phone: null, expiresAt: 0, verified: false, timer: null },
   syncTimer:    null,
   firebaseOk:   false,
+  hasFullSync:  false,
+  firebaseKeys: new Set(),
 };
 
 // ============================================================
@@ -129,8 +132,9 @@ const native = {
         fileInput.addEventListener('change', () => {
           if (fileInput.files && fileInput.files[0]) {
             const reader = new FileReader();
-            reader.onload = (e) => {
-              window.onNativePhotoSelected && window.onNativePhotoSelected(e.target.result);
+            reader.onload = async (e) => {
+              const compressed = await compressImageDataUrl(e.target.result, 640, 0.68);
+              window.onNativePhotoSelected && window.onNativePhotoSelected(compressed);
             };
             reader.readAsDataURL(fileInput.files[0]);
           }
@@ -144,6 +148,7 @@ const native = {
     setAuthLoading(true, 'Opening Google Account Chooser...');
 
     const redirectUri = 'https://dheeraj-0809.github.io/Lost-and-found-/';
+    const isApk = isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.openWebAuth;
 
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}` +
@@ -151,10 +156,11 @@ const native = {
       `&response_type=token` +
       `&scope=${encodeURIComponent('email profile')}` +
       `&prompt=select_account` +
-      `&hd=rvu.edu.in`;
+      `&hd=rvu.edu.in` +
+      (isApk ? `&state=native_apk` : '');
 
     // On Android native APK: open Google OAuth in Chrome (not WebView) so Google accepts it
-    if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.openWebAuth) {
+    if (isApk) {
       window.LostLinkNative.openWebAuth(authUrl);
       setTimeout(() => setAuthLoading(false), 3000);
       return;
@@ -303,25 +309,98 @@ function markAllSeen() {
 }
 
 // ============================================================
-// 6. FIREBASE REST API
+// 6. FIREBASE REST API & IMAGE COMPRESSION
 // ============================================================
-async function fbGet(path) {
-  if (!FIREBASE_DB_URL) return null;
+function compressImageDataUrl(dataUrl, maxDim = 640, quality = 0.68) {
+  return new Promise((resolve) => {
+    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) {
+      resolve(dataUrl || '');
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      try {
+        let w = img.width || 640;
+        let h = img.height || 480;
+        if (w > maxDim || h > maxDim) {
+          const ratio = Math.min(maxDim / w, maxDim / h);
+          w = Math.max(1, Math.round(w * ratio));
+          h = Math.max(1, Math.round(h * ratio));
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        const out = canvas.toDataURL('image/jpeg', quality);
+        resolve(out && out.length < dataUrl.length ? out : dataUrl);
+      } catch {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  if (typeof AbortController !== 'undefined') {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(tid);
+    }
+  }
+  return await fetch(url, options);
+}
+
+function buildFbUrl(path) {
+  const parts = String(path || '').split('?');
+  const basePath = parts[0].replace(/\.json$/, '');
+  const qs = parts[1] ? `?${parts[1]}` : '';
+  return `${FIREBASE_DB_URL}/${basePath}.json${qs}`;
+}
+
+async function fbGetStatus(path) {
+  if (!FIREBASE_DB_URL) return { ok: false, data: null };
   try {
-    const r = await fetch(`${FIREBASE_DB_URL}/${path}.json`, { method:'GET' });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch { return null; }
+    const r = await fetchWithTimeout(buildFbUrl(path), { method: 'GET', cache: 'no-store' }, 20000);
+    if (!r.ok) return { ok: false, data: null };
+    const data = await r.json();
+    return { ok: true, data };
+  } catch {
+    return { ok: false, data: null };
+  }
+}
+
+async function fbGet(path) {
+  const res = await fbGetStatus(path);
+  return res.ok ? res.data : null;
 }
 
 async function fbPost(path, data) {
   if (!FIREBASE_DB_URL) return null;
   try {
-    const r = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
+    const r = await fetchWithTimeout(buildFbUrl(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
-    });
+    }, 20000);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+async function fbPut(path, data) {
+  if (!FIREBASE_DB_URL) return null;
+  try {
+    const r = await fetchWithTimeout(buildFbUrl(path), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }, 15000);
     if (!r.ok) return null;
     return await r.json();
   } catch { return null; }
@@ -330,18 +409,27 @@ async function fbPost(path, data) {
 async function fbDelete(path) {
   if (!FIREBASE_DB_URL) return false;
   try {
-    const r = await fetch(`${FIREBASE_DB_URL}/${path}.json`, { method:'DELETE' });
+    const r = await fetchWithTimeout(buildFbUrl(path), { method: 'DELETE' }, 15000);
     return r.ok;
   } catch { return false; }
 }
 
 function getClearedNotifIds() { return safeArr(localStorage.getItem(CLEARED_NOTIFS_KEY)); }
+function getAlertedMatchIds() { return safeArr(localStorage.getItem(ALERTED_MATCHES_KEY)); }
 
 function addClearedNotifId(id) {
   const cleared = getClearedNotifIds();
   if (!cleared.includes(id)) {
     cleared.push(id);
     localStorage.setItem(CLEARED_NOTIFS_KEY, JSON.stringify(cleared));
+  }
+}
+
+function addAlertedMatchId(id) {
+  const alerted = getAlertedMatchIds();
+  if (!alerted.includes(id)) {
+    alerted.push(id);
+    try { localStorage.setItem(ALERTED_MATCHES_KEY, JSON.stringify(alerted)); } catch {}
   }
 }
 
@@ -353,8 +441,8 @@ window.clearNotification = function(mId) {
 };
 
 function clearAllNotifs() {
-  const myEmail = state.user ? state.user.email : '';
-  const myMatches = state.matches.filter(m => m.lost.ownerEmail === myEmail);
+  const myEmail = normEmail(state.user ? state.user.email : '');
+  const myMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail);
   myMatches.forEach(m => addClearedNotifId(matchId(m)));
   updateNotifBadge();
   renderNotifications();
@@ -364,6 +452,7 @@ function clearAllNotifs() {
 async function deleteReport(reportId, fbKey) {
   if (FIREBASE_DB_URL && fbKey) {
     await fbDelete('reports/' + fbKey);
+    state.firebaseKeys.delete(fbKey);
   }
   if (hasNative && reportId && !isNaN(Number(reportId))) {
     try { window.LostLinkNative.deleteReport(Number(reportId)); } catch {}
@@ -388,105 +477,329 @@ window.confirmClearReport = function(rId, fbKey) {
 // ============================================================
 // 7. DATA LAYER — Reports
 // ============================================================
+function reportDedupeKey(r) {
+  if (r._fbKey) return r._fbKey;
+  return `${r.createdAt || ''}|${normEmail(r.ownerEmail)}|${norm(r.title)}`;
+}
+
 function localGetReports() {
-  // Try Java SQLite bridge first (on device), then localStorage
+  const cached = safeArr(localStorage.getItem(REPORTS_KEY));
+  let nativeList = [];
   if (hasNative) {
-    try { return safeArr(window.LostLinkNative.getReports()); } catch {}
+    try { nativeList = safeArr(window.LostLinkNative.getReports()); } catch {}
   }
-  return safeArr(localStorage.getItem(REPORTS_KEY));
+  if (!nativeList.length) return cached;
+  if (!cached.length) return nativeList;
+  const merged = new Map();
+  cached.forEach(r => merged.set(reportDedupeKey(r), r));
+  nativeList.forEach(r => {
+    const dk = `${r.createdAt || ''}|${normEmail(r.ownerEmail)}|${norm(r.title)}`;
+    const exists = Array.from(merged.values()).some(x =>
+      (r._fbKey && x._fbKey === r._fbKey) ||
+      (`${x.createdAt || ''}|${normEmail(x.ownerEmail)}|${norm(x.title)}` === dk)
+    );
+    if (!exists) merged.set(reportDedupeKey(r), r);
+  });
+  return Array.from(merged.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
 function localSaveReport(data) {
   if (hasNative) {
     try {
       const result = safeObj(window.LostLinkNative.saveReport(JSON.stringify(data)));
-      if (result.ok) return { ok:true, id:result.id };
+      if (result.ok) {
+        data.id = result.id;
+      }
     } catch {}
   }
-  // localStorage fallback
-  const items = localGetReports();
-  data.id = Date.now().toString();
-  data.status = 'OPEN';
-  data.createdAt = Date.now();
+  const items = safeArr(localStorage.getItem(REPORTS_KEY));
+  if (!data.id) data.id = Date.now().toString();
+  if (!data.status) data.status = 'OPEN';
+  if (!data.createdAt) data.createdAt = Date.now();
   items.unshift(data);
-  localStorage.setItem(REPORTS_KEY, JSON.stringify(items));
-  return { ok:true, id:data.id };
+  cacheReports(items);
+  return { ok: true, id: data.id };
 }
 
 function cacheReports(reports) {
-  localStorage.setItem(REPORTS_KEY, JSON.stringify(reports));
+  try {
+    localStorage.setItem(REPORTS_KEY, JSON.stringify(reports));
+  } catch (e) {
+    // Strip heavy photoURIs if storage quota is tight, preserving all report metadata & matches
+    try {
+      const compact = reports.map(r => (r.photoUri && r.photoUri.length > 50000) ? { ...r, photoUri: '' } : r);
+      localStorage.setItem(REPORTS_KEY, JSON.stringify(compact));
+    } catch {
+      try {
+        const minimal = reports.slice(0, 60).map(r => ({ ...r, photoUri: '' }));
+        localStorage.setItem(REPORTS_KEY, JSON.stringify(minimal));
+      } catch {}
+    }
+  }
 }
 
-/** Fetch all reports from Firebase (or local fallback) and update state */
-async function syncReports(showToast=false) {
-  if (FIREBASE_DB_URL) {
-    try {
-      const raw = await fbGet('reports');
-      if (raw) {
-        // Firebase returns an object keyed by push-ID
-        const fbArr = Object.entries(raw).map(([key,val])=>({ ...val, _fbKey:key }));
-        const localArr = localGetReports();
-        const mergedMap = new Map();
-
-        fbArr.forEach(r => {
-          const k = r._fbKey || r.id || String(r.createdAt);
-          mergedMap.set(k, r);
-        });
-
-        localArr.forEach(r => {
-          const k = r._fbKey || r.id || String(r.createdAt);
-          if (!mergedMap.has(k)) {
-            mergedMap.set(k, r);
-            if (!r._fbKey) {
-              fbPost('reports', r).then(res => { if (res && res.name) r._fbKey = res.name; }).catch(() => {});
-            }
-          }
-        });
-
-        const arr = Array.from(mergedMap.values());
-        arr.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
-        state.reports = arr;
-        cacheReports(arr);
-        state.firebaseOk = true;
-        updateSyncStatus('Synced');
-        if (showToast) toast('Reports updated ✓');
-      } else {
-        state.reports = localGetReports();
-        state.firebaseOk = false;
-        updateSyncStatus('Offline mode');
+/** Flush any locally queued offline reports up to Firebase */
+async function flushPendingUploads(reportsList) {
+  let changed = false;
+  for (const r of reportsList) {
+    if (r._pendingUpload && !r._fbKey) {
+      const payload = { ...r };
+      delete payload._pendingUpload;
+      delete payload._fbKey;
+      const res = await fbPost('reports', payload);
+      if (res && res.name) {
+        r._fbKey = res.name;
+        delete r._pendingUpload;
+        state.firebaseKeys.add(res.name);
+        changed = true;
       }
-    } catch (e) {
-      state.reports = localGetReports();
-      state.firebaseOk = false;
-      updateSyncStatus('Offline mode');
     }
-  } else {
+  }
+  if (changed) cacheReports(reportsList);
+}
+
+/** Fetch reports from Firebase using fast shallow diffing after initial load */
+async function syncReports(showToast = false) {
+  if (!FIREBASE_DB_URL) {
     state.reports = localGetReports();
     state.firebaseOk = false;
     updateSyncStatus('Local only');
     $('#firebaseNote') && $('#firebaseNote').classList.remove('hidden');
+    state.matches = computeMatches(state.reports);
+    return;
   }
 
-  const prevCount = state.matches ? state.matches.length : 0;
-  state.matches = computeMatches(state.reports);
-  if (state.user && state.matches.length > prevCount) {
-    const myEmail = normEmail(state.user.email);
-    const newMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail);
-    if (newMatches.length > 0) {
-      notifyUserOfMatch(newMatches[0]);
+  try {
+    let syncSuccess = false;
+
+    if (!state.hasFullSync || showToast) {
+      const res = await fbGetStatus('reports');
+      if (res.ok) {
+        syncSuccess = true;
+        const raw = res.data || {};
+        const fbArr = Object.entries(raw).map(([key, val]) => ({ ...val, _fbKey: key }));
+        state.firebaseKeys = new Set(fbArr.map(r => r._fbKey));
+
+        const localArr = localGetReports();
+        const mergedMap = new Map();
+        const sigSet = new Set();
+
+        fbArr.forEach(r => {
+          mergedMap.set(r._fbKey, r);
+          sigSet.add(`${r.createdAt || ''}|${normEmail(r.ownerEmail)}|${norm(r.title)}`);
+        });
+
+        localArr.forEach(r => {
+          const sig = `${r.createdAt || ''}|${normEmail(r.ownerEmail)}|${norm(r.title)}`;
+          if (r._fbKey && mergedMap.has(r._fbKey)) return;
+          if (sigSet.has(sig)) return;
+          mergedMap.set(reportDedupeKey(r), r);
+        });
+
+        const arr = Array.from(mergedMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        await flushPendingUploads(arr);
+        state.reports = arr;
+        state.hasFullSync = true;
+        cacheReports(arr);
+      }
+    } else {
+      // Fast 490-byte shallow check to detect additions/deletions across campus within seconds
+      const shallowRes = await fbGetStatus('reports?shallow=true');
+      if (shallowRes.ok) {
+        syncSuccess = true;
+        const remoteKeysObj = shallowRes.data || {};
+        const remoteKeys = new Set(Object.keys(remoteKeysObj));
+
+        const newKeys = [...remoteKeys].filter(k => !state.firebaseKeys.has(k));
+        const deletedKeys = [...state.firebaseKeys].filter(k => !remoteKeys.has(k));
+
+        let updated = false;
+        if (deletedKeys.length > 0) {
+          const delSet = new Set(deletedKeys);
+          state.reports = state.reports.filter(r => !r._fbKey || !delSet.has(r._fbKey));
+          deletedKeys.forEach(k => state.firebaseKeys.delete(k));
+          updated = true;
+        }
+
+        if (newKeys.length > 0) {
+          const fetched = await Promise.all(
+            newKeys.map(async (k) => {
+              const itemRes = await fbGetStatus(`reports/${k}`);
+              return (itemRes.ok && itemRes.data) ? { ...itemRes.data, _fbKey: k } : null;
+            })
+          );
+          fetched.forEach(item => {
+            if (!item) return;
+            state.firebaseKeys.add(item._fbKey);
+            const sig = `${item.createdAt || ''}|${normEmail(item.ownerEmail)}|${norm(item.title)}`;
+            const existingIdx = state.reports.findIndex(r =>
+              r._fbKey === item._fbKey ||
+              (`${r.createdAt || ''}|${normEmail(r.ownerEmail)}|${norm(r.title)}` === sig)
+            );
+            if (existingIdx >= 0) {
+              state.reports[existingIdx] = item;
+            } else {
+              state.reports.unshift(item);
+            }
+            updated = true;
+          });
+        }
+
+        await flushPendingUploads(state.reports);
+        if (updated) {
+          state.reports.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          cacheReports(state.reports);
+        }
+      }
     }
+
+    if (syncSuccess) {
+      state.firebaseOk = true;
+      updateSyncStatus('Synced');
+      if (showToast) toast('Reports updated ✓');
+    } else {
+      if (!state.reports.length) state.reports = localGetReports();
+      state.firebaseOk = false;
+      updateSyncStatus(navigator.onLine === false ? 'Offline mode' : 'Reconnecting...');
+    }
+  } catch (e) {
+    if (!state.reports.length) state.reports = localGetReports();
+    state.firebaseOk = false;
+    updateSyncStatus(navigator.onLine === false ? 'Offline mode' : 'Reconnecting...');
+  }
+
+  state.matches = computeMatches(state.reports);
+  checkAndPopupNewMatches();
+}
+
+function checkAndPopupNewMatches() {
+  if (!state.user || !state.matches.length) return;
+  const myEmail = normEmail(state.user.email);
+  const clearedIds = getClearedNotifIds();
+  const alertedIds = getAlertedMatchIds();
+
+  const unseenMatches = state.matches.filter(m => {
+    const id = matchId(m);
+    const involvesMe = normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail;
+    return involvesMe && !clearedIds.includes(id) && !alertedIds.includes(id);
+  });
+
+  if (unseenMatches.length > 0) {
+    const top = unseenMatches[0];
+    addAlertedMatchId(matchId(top));
+    notifyUserOfMatch(top, true);
   }
 }
 
-function notifyUserOfMatch(match) {
+function showMatchPopup(match) {
   if (!match || !state.user) return;
-  const iAmLost = match.lost.ownerEmail === state.user.email;
+  const modal = $('#matchPopupModal');
+  if (!modal) return;
+
+  const myEmail = normEmail(state.user.email);
+  const iAmLost = normEmail(match.lost.ownerEmail) === myEmail;
+  const other = iAmLost ? match.found : match.lost;
+  const myItem = iAmLost ? match.lost : match.found;
+  const pct = match.confidence;
+  const color = pct >= 75 ? '#2ED573' : pct >= 50 ? '#F5B731' : '#F97316';
+
+  const subEl = $('#matchPopupSub');
+  if (subEl) subEl.textContent = iAmLost ? 'Someone found an item matching yours!' : 'Your found item matches a lost report!';
+
+  const pctEl = $('#matchPopupPctBadge');
+  if (pctEl) {
+    pctEl.textContent = `${pct}% Match`;
+    pctEl.style.color = color;
+    pctEl.style.background = `${color}28`;
+  }
+
+  const reasonEl = $('#matchPopupReason');
+  if (reasonEl) {
+    reasonEl.innerHTML = `<strong>AI Match Signals:</strong> ${esc(match.reason)}`;
+  }
+
+  const itemsEl = $('#matchPopupItems');
+  if (itemsEl) {
+    itemsEl.innerHTML = `
+      <div style="background:rgba(239,68,68,0.10); border:1px solid rgba(239,68,68,0.25); border-radius:10px; padding:8px;">
+        <div style="font-size:10px; font-weight:800; color:#F87171;">LOST ITEM</div>
+        <div style="font-size:12.5px; font-weight:700; color:#F8FAFC; margin-top:2px;">${esc(match.lost.title)}</div>
+        <div style="font-size:10.5px; color:#94A3B8; margin-top:2px;">📍 ${esc(match.lost.location)}</div>
+      </div>
+      <div style="background:rgba(34,197,94,0.10); border:1px solid rgba(34,197,94,0.25); border-radius:10px; padding:8px;">
+        <div style="font-size:10px; font-weight:800; color:#4ADE80;">FOUND ITEM</div>
+        <div style="font-size:12.5px; font-weight:700; color:#F8FAFC; margin-top:2px;">${esc(match.found.title)}</div>
+        <div style="font-size:10.5px; color:#94A3B8; margin-top:2px;">📍 ${esc(match.found.location)}</div>
+      </div>`;
+  }
+
+  const photoWrap = $('#matchPopupPhotoWrap');
+  const photoEl = $('#matchPopupPhoto');
+  const displayPhoto = (match.found.photoUri && match.found.photoUri !== 'demo-uri')
+    ? match.found.photoUri
+    : ((match.lost.photoUri && match.lost.photoUri !== 'demo-uri') ? match.lost.photoUri : '');
+  if (photoWrap && photoEl) {
+    if (displayPhoto) {
+      photoEl.src = displayPhoto;
+      photoWrap.classList.remove('hidden');
+    } else {
+      photoEl.src = '';
+      photoWrap.classList.add('hidden');
+    }
+  }
+
+  const roleEl = $('#matchPopupPersonRole');
+  if (roleEl) {
+    roleEl.textContent = iAmLost ? '📞 Found By (Contact Details)' : '📞 Lost By (Owner Details)';
+  }
+
+  const infoEl = $('#matchPopupPersonInfo');
+  if (infoEl) {
+    infoEl.innerHTML = `
+      <div><strong>👤 Name:</strong> ${esc(other.ownerName || 'RVU Student')}</div>
+      <div><strong>📱 Mobile:</strong> ${esc(other.ownerPhone || 'Not provided')}</div>
+      <div><strong>📧 Email:</strong> ${esc(other.ownerEmail || '—')}</div>
+      <div><strong>🎓 Academic:</strong> ${esc(other.ownerBranch || 'RVU')} · Sem ${esc(other.ownerSemester || '?')}</div>
+      <div><strong>📍 Reported At:</strong> ${esc(other.location || 'RVU Campus')}</div>`;
+  }
+
+  const actionsEl = $('#matchPopupActions');
+  if (actionsEl) {
+    const cleanPhone = String(other.ownerPhone || '').replace(/\D/g, '');
+    const waPhone = cleanPhone.length === 10 ? '91' + cleanPhone : cleanPhone;
+    const rawMsg = `Hi ${other.ownerName || 'there'}! LostLink AI matched "${myItem.title}" (${pct}% match). Let's connect at RVU Admin Block!`;
+    actionsEl.innerHTML = (cleanPhone.length >= 10 ? `
+      <button type="button" class="btn-notif-action btn-wa" data-phone="${waPhone}" data-msg="${encodeURIComponent(rawMsg)}" onclick="sendWhatsAppFromEl(this); return false;">💬 WhatsApp</button>
+      <button type="button" class="btn-notif-action btn-call" data-phone="${cleanPhone}" onclick="callPhoneFromEl(this); return false;">📞 Call</button>
+    ` : '') + `
+      <button type="button" class="btn-notif-action btn-maps" onclick="window.openMaps(${ADMIN_LAT}, ${ADMIN_LNG}, 'RVU Admin Block Collection Point'); return false;">📍 Admin Block</button>
+    `;
+  }
+
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeMatchPopup() {
+  const modal = $('#matchPopupModal');
+  if (modal) {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+}
+
+function notifyUserOfMatch(match, openPopup = true) {
+  if (!match || !state.user) return;
+  const iAmLost = normEmail(match.lost.ownerEmail) === normEmail(state.user.email);
   const myItem = iAmLost ? match.lost : match.found;
   const otherItem = iAmLost ? match.found : match.lost;
   const title = `🎯 Match Alert (${match.confidence}% Match)`;
-  const msg = `${iAmLost ? 'Your lost' : 'Your found'} "${myItem.title}" matched with "${otherItem.title}"!`;
+  const msg = `${iAmLost ? 'Your lost' : 'Your found'} "${myItem.title}" matched ${match.confidence}% with "${otherItem.title}"!`;
 
   toast(msg, 'success');
+  if (openPopup) showMatchPopup(match);
 
   if ('Notification' in window) {
     if (Notification.permission === 'granted') {
@@ -510,21 +823,32 @@ async function submitNewReport(data) {
   let firebaseKey = null;
 
   if (FIREBASE_DB_URL) {
-    const result = await fbPost('reports', data);
+    let result = await fbPost('reports', data);
+    if (!result || !result.name) {
+      // Retry once after brief pause on transient mobile data drops
+      await new Promise(res => setTimeout(res, 600));
+      result = await fbPost('reports', data);
+    }
     if (result && result.name) {
       firebaseKey = result.name;
       data._fbKey = firebaseKey;
+      state.firebaseKeys.add(firebaseKey);
+      state.firebaseOk = true;
+      updateSyncStatus('Synced');
+    } else {
+      data._pendingUpload = true;
     }
   }
 
   // Also save locally (offline backup / on-device SQLite)
   localSaveReport({ ...data });
 
-  // Add to in-memory state immediately (don't wait for next sync)
+  // Add to in-memory state immediately
   state.reports.unshift(data);
+  cacheReports(state.reports);
   state.matches = computeMatches(state.reports);
 
-  return { ok:true, firebaseKey };
+  return { ok: true, firebaseKey, offlineQueued: !firebaseKey && !!FIREBASE_DB_URL };
 }
 
 function updateSyncStatus(msg) {
@@ -535,20 +859,45 @@ function updateSyncStatus(msg) {
 // ============================================================
 // 8. AI MATCHING ENGINE
 // ============================================================
-/**
- * Computes matches between all LOST and FOUND reports.
- * Scoring weights (total possible: 100):
- *   Category match:       30 pts  (strongest signal)
- *   Color match:          20 pts
- *   Brand/Model match:    15 pts
- *   Location match:       15 pts
- *   Description similarity: up to 12 pts (3 pts per shared meaningful word)
- *   Both have photos:      5 pts
- *   Date proximity (≤3d):  3 pts
- */
+const COLOR_FAMILIES = [
+  ['white', 'cream', 'offwhite', 'ivory', 'beige', 'pearl'],
+  ['black', 'dark', 'charcoal', 'matteblack', 'jetblack'],
+  ['grey', 'gray', 'silver', 'slate', 'graphite'],
+  ['blue', 'navy', 'darkblue', 'skyblue', 'lightblue', 'cyan', 'teal'],
+  ['red', 'maroon', 'crimson', 'burgundy'],
+  ['green', 'olive', 'darkgreen', 'lightgreen', 'mint'],
+  ['yellow', 'gold', 'golden', 'mustard'],
+  ['pink', 'rose', 'magenta', 'peach'],
+  ['brown', 'tan', 'khaki', 'bronze', 'copper'],
+  ['purple', 'violet', 'lavender'],
+];
+
+function areSimilarColors(c1, c2) {
+  if (!c1 || !c2 || c1 === 'unknown' || c2 === 'unknown') return false;
+  if (c1 === c2) return true;
+  for (const fam of COLOR_FAMILIES) {
+    const m1 = fam.some(w => c1.includes(w));
+    const m2 = fam.some(w => c2.includes(w));
+    if (m1 && m2) return true;
+  }
+  return false;
+}
+
+function locationDistanceMeters(locA, locB) {
+  const a = LOCATIONS.find(l => norm(l.name) === locA);
+  const b = LOCATIONS.find(l => norm(l.name) === locB);
+  if (!a || !b) return Infinity;
+  const R = 6371000;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLng = (b.lng - a.lng) * Math.PI / 180;
+  const s = Math.sin(dLat / 2) ** 2 +
+    Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+
 function computeMatches(reports) {
-  const losts  = reports.filter(r => r.type && r.type.toUpperCase()==='LOST'  && (!r.status || r.status.toUpperCase()==='OPEN'));
-  const founds = reports.filter(r => r.type && r.type.toUpperCase()==='FOUND' && (!r.status || r.status.toUpperCase()==='OPEN'));
+  const losts  = reports.filter(r => r.type && r.type.toUpperCase() === 'LOST'  && (!r.status || r.status.toUpperCase() === 'OPEN'));
+  const founds = reports.filter(r => r.type && r.type.toUpperCase() === 'FOUND' && (!r.status || r.status.toUpperCase() === 'OPEN'));
   const out    = [];
   const seen   = new Set();
 
@@ -560,7 +909,7 @@ function computeMatches(reports) {
       if (lEmail && fEmail && lEmail === fEmail) return;
 
       const s = scoreMatch(l, f);
-      if (s.score < 30) return; // minimum threshold
+      if (s.score < 35) return; // minimum threshold
 
       const lKey = l._fbKey || l.id || String(l.createdAt);
       const fKey = f._fbKey || f.id || String(f.createdAt);
@@ -568,76 +917,104 @@ function computeMatches(reports) {
       if (seen.has(key)) return;
       seen.add(key);
 
-      out.push({ lost:l, found:f, confidence:s.score, reason:s.reasons.join(', ') || 'partial similarity' });
+      out.push({ lost: l, found: f, confidence: s.score, reason: s.reasons.join(', ') || 'partial similarity' });
     });
   });
 
-  return out.sort((a,b)=>b.confidence-a.confidence);
+  return out.sort((a, b) => b.confidence - a.confidence);
 }
 
 function scoreMatch(l, f) {
   let score = 0;
   const reasons = [];
 
-  // --- Category (strongest signal) ---
-  const lCat = norm(l.category), fCat = norm(f.category);
-  if (lCat && lCat!=='other' && lCat===fCat) { score+=30; reasons.push('same category'); }
-  else if (lCat && fCat && lCat!=='other' && fCat!=='other' && (lCat.includes(fCat)||fCat.includes(lCat))) { score+=15; }
-
-  // --- Color ---
-  const lCol = norm(l.color), fCol = norm(f.color);
-  if (lCol && lCol!=='unknown' && lCol===fCol) { score+=20; reasons.push('same color'); }
-  else if (lCol && fCol && lCol!=='unknown' && fCol!=='unknown' && (lCol.includes(fCol)||fCol.includes(lCol))) { score+=8; }
-
-  // --- Brand / Model ---
-  const lBr = norm(l.brand), fBr = norm(f.brand);
-  if (lBr && lBr!=='unknown' && lBr===fBr) { score+=15; reasons.push('same brand/model'); }
-  else if (lBr && fBr && lBr!=='unknown' && fBr!=='unknown' && (lBr.includes(fBr)||fBr.includes(lBr))) { score+=7; }
-
-  // --- Location ---
-  const lLoc = norm(l.location), fLoc = norm(f.location);
-  if (lLoc && lLoc===fLoc) { score+=15; reasons.push('same location'); }
-  else if (lLoc && fLoc) {
-    const shared = lLoc.split(' ').filter(w=>w.length>3 && fLoc.includes(w)).length;
-    if (shared>0) { score+=Math.min(7, shared*4); }
+  // --- Item Title (strong direct signal, 20 pts) ---
+  const lTit = norm(l.title), fTit = norm(f.title);
+  if (lTit && fTit) {
+    if (lTit === fTit) {
+      score += 20;
+      reasons.push('exact item name');
+    } else if (lTit.includes(fTit) || fTit.includes(lTit)) {
+      score += 14;
+      reasons.push('similar item name');
+    } else {
+      const sharedTitle = countSharedWords(lTit, fTit);
+      if (sharedTitle > 0) {
+        score += Math.min(12, sharedTitle * 6);
+        reasons.push('similar item name');
+      }
+    }
   }
 
-  // --- Description + imageClues keyword overlap ---
+  // --- Category (25 pts) ---
+  const lCat = norm(l.category), fCat = norm(f.category);
+  if (lCat && lCat !== 'other' && lCat === fCat) { score += 25; reasons.push('same category'); }
+  else if (lCat && fCat && lCat !== 'other' && fCat !== 'other' && (lCat.includes(fCat) || fCat.includes(lCat))) { score += 12; }
+
+  // --- Color (15 pts exact / 10 pts similar color family) ---
+  const lCol = norm(l.color), fCol = norm(f.color);
+  if (lCol && lCol !== 'unknown' && lCol === fCol) { score += 15; reasons.push('same color'); }
+  else if (areSimilarColors(lCol, fCol) || (lCol && fCol && lCol !== 'unknown' && fCol !== 'unknown' && (lCol.includes(fCol) || fCol.includes(lCol)))) {
+    score += 10;
+    reasons.push('similar color');
+  }
+
+  // --- Brand / Model (15 pts) ---
+  const lBr = norm(l.brand), fBr = norm(f.brand);
+  if (lBr && lBr !== 'unknown' && lBr === fBr) { score += 15; reasons.push('same brand/model'); }
+  else if (lBr && fBr && lBr !== 'unknown' && fBr !== 'unknown' && (lBr.includes(fBr) || fBr.includes(lBr))) { score += 8; }
+
+  // --- Location & Campus Coordinate Proximity (15 pts) ---
+  const lLoc = norm(l.location), fLoc = norm(f.location);
+  if (lLoc && lLoc === fLoc) { score += 15; reasons.push('same location'); }
+  else if (lLoc && fLoc) {
+    const distM = locationDistanceMeters(lLoc, fLoc);
+    if (distM <= 150) {
+      score += 8;
+      reasons.push('nearby campus area');
+    } else {
+      const shared = lLoc.split(' ').filter(w => w.length > 3 && fLoc.includes(w)).length;
+      if (shared > 0) score += Math.min(7, shared * 4);
+    }
+  }
+
+  // --- Description + imageClues keyword overlap (up to 10 pts) ---
   const lText = `${l.title} ${l.description} ${l.imageClues}`;
   const fText = `${f.title} ${f.description} ${f.imageClues}`;
   const sharedWords = countSharedWords(lText, fText);
-  if (sharedWords>0) {
-    const pts = Math.min(12, sharedWords*3);
+  if (sharedWords > 0) {
+    const pts = Math.min(10, sharedWords * 3);
     score += pts;
-    if (sharedWords>=2) reasons.push('similar description');
+    if (sharedWords >= 2) reasons.push('matching details');
   }
 
-  // --- Both have photos ---
-  if (l.photoUri && f.photoUri && l.photoUri!=='demo-uri' && f.photoUri!=='demo-uri') {
-    score+=5; reasons.push('both have photos');
+  // --- Photo availability & visual hash similarity (up to 20 pts) ---
+  if (l.photoUri && f.photoUri && l.photoUri !== 'demo-uri' && f.photoUri !== 'demo-uri') {
+    score += 5;
   }
-
-  // --- Photo hash similarity ---
-  if (l.photoHash && f.photoHash && l.photoHash!=='' && f.photoHash!=='') {
+  if (l.photoHash && f.photoHash && l.photoHash !== '' && f.photoHash !== '') {
     const dist = hammingDistance(l.photoHash, f.photoHash);
-    if (dist <= 5) {
+    if (dist <= 10) {
       score += 15;
-      reasons.push('photo similarity');
+      reasons.push('visual photo match');
+    } else if (dist <= 16) {
+      score += 8;
+      reasons.push('similar photo');
     }
   }
 
   // --- Date proximity (within 3 days) ---
   if (l.date && f.date) {
-    const diff = Math.abs(new Date(l.date)-new Date(f.date)) / 86400000;
-    if (diff<=3) { score+=3; }
+    const diff = Math.abs(new Date(l.date) - new Date(f.date)) / 86400000;
+    if (diff <= 3) { score += 3; }
   }
 
   return { score: Math.min(100, score), reasons };
 }
 
 function countSharedWords(a, b) {
-  const setB = new Set(norm(b).split(/\s+/).filter(w=>w.length>3));
-  return norm(a).split(/\s+/).filter(w=>w.length>3 && setB.has(w)).length;
+  const setB = new Set(norm(b).split(/\s+/).filter(w => w.length > 2));
+  return norm(a).split(/\s+/).filter(w => w.length > 2 && setB.has(w)).length;
 }
 function hammingDistance(a, b) {
   if (a.length !== b.length) return Infinity;
@@ -746,8 +1123,9 @@ function populateProfile() {
   if ($('#acctSemester')) $('#acctSemester').textContent = u.semester ? `Semester ${u.semester}` : '—';
 
   // My reports/matches counts
-  const myReports = state.reports.filter(r=>r.ownerEmail===u.email);
-  const myMatches = state.matches.filter(m=>m.lost.ownerEmail===u.email||m.found.ownerEmail===u.email);
+  const myEm = normEmail(u.email);
+  const myReports = state.reports.filter(r => normEmail(r.ownerEmail) === myEm);
+  const myMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEm || normEmail(m.found.ownerEmail) === myEm);
   $('#profileReportCount').textContent = myReports.length;
   $('#profileMatchCount').textContent  = myMatches.length;
 }
@@ -1060,8 +1438,8 @@ async function verifyEnteredOtp() {
     return;
   }
 
-  // Verify against session code or master campus code
-  if (entered === state.otp.code || entered === '123456') {
+  // Verify strictly against session 30-second OTP code
+  if (entered === state.otp.code) {
     state.otp.verified = true;
     if (state.otp.timer) clearInterval(state.otp.timer);
     closeOtpModal();
@@ -1262,10 +1640,11 @@ window.onNativeGoogleSignIn = async (result) => {
   }
 };
 
-window.onNativePhotoSelected = (uri) => {
+window.onNativePhotoSelected = async (uri) => {
   if (!uri) return;
-  state.selectedPhoto = uri;
-  photoUriToHash(uri).then(hash => {
+  const compressed = await compressImageDataUrl(uri, 640, 0.68);
+  state.selectedPhoto = compressed;
+  photoUriToHash(compressed).then(hash => {
     state.selectedPhotoHash = hash;
   }).catch(() => {
     state.selectedPhotoHash = '';
@@ -1320,6 +1699,7 @@ function openReportSheet(type) {
   if (!state.user) { toast('Sign in to file a report'); return; }
 
   state.selectedPhoto = '';
+  state.selectedPhotoHash = '';
   const isLost = type==='LOST';
   $('#reportType').value      = type;
   $('#formEyebrow').textContent = isLost ? 'I LOST SOMETHING' : 'I FOUND SOMETHING';
@@ -1384,17 +1764,26 @@ async function submitReport(e) {
   e.target.reset();
   $('#eventDate').value = localDate();
   state.selectedPhoto   = '';
+  state.selectedPhotoHash = '';
   closeReportSheet();
   refreshAll();
   updateNotifBadge();
 
-  const newMatches = state.matches.filter(m =>
-    m.lost.ownerEmail===data.ownerEmail || m.found.ownerEmail===data.ownerEmail
+  // Trigger instant in-app AI Match Pop-Up if this report matches any existing report!
+  checkAndPopupNewMatches();
+
+  const myEm = normEmail(data.ownerEmail);
+  const myMatches = state.matches.filter(m =>
+    normEmail(m.lost.ownerEmail) === myEm || normEmail(m.found.ownerEmail) === myEm
   );
-  toast(newMatches.length>0
-    ? `🎯 Report published! AI found ${newMatches.length} potential match${newMatches.length>1?'es':''}!`
-    : '✅ Report published successfully!',
-    'success');
+  if (result.offlineQueued) {
+    toast('Saved locally — will upload to cloud database automatically when online.', 'info');
+  } else {
+    toast(myMatches.length > 0
+      ? `🎯 Report published! AI found ${myMatches.length} potential match${myMatches.length > 1 ? 'es' : ''}!`
+      : '✅ Report uploaded to cloud database!',
+      'success');
+  }
 }
 
 // ============================================================
@@ -1406,10 +1795,10 @@ function renderDashboard() {
   const r = state.reports.filter(x => normEmail(x.ownerEmail) === myEmail);
   const myMatches = state.matches.filter(m => normEmail(m.lost.ownerEmail) === myEmail || normEmail(m.found.ownerEmail) === myEmail);
 
-  animNum('lostCount',    r.filter(x=>x.type==='LOST'  && (!x.status || x.status==='OPEN')).length);
-  animNum('foundCount',   r.filter(x=>x.type==='FOUND' && (!x.status || x.status==='OPEN')).length);
+  animNum('lostCount',    r.filter(x => (x.type || '').toUpperCase() === 'LOST'  && (!x.status || x.status.toUpperCase() === 'OPEN')).length);
+  animNum('foundCount',   r.filter(x => (x.type || '').toUpperCase() === 'FOUND' && (!x.status || x.status.toUpperCase() === 'OPEN')).length);
   animNum('matchCount',   myMatches.length);
-  animNum('returnedCount',r.filter(x=>x.status==='RETURNED').length);
+  animNum('returnedCount',r.filter(x => (x.status || '').toUpperCase() === 'RETURNED').length);
 
   const recent = state.reports.slice(0, 5);
   $('#recentReports').innerHTML = recent.length
@@ -1835,6 +2224,9 @@ function bindEvents() {
   $('#otpModal')?.addEventListener('click', (e) => { if (e.target === $('#otpModal')) closeOtpModal(); });
   $('#simMismatchOkBtn')?.addEventListener('click', closeSimMismatchPopup);
   $('#simMismatchModal')?.addEventListener('click', (e) => { if (e.target === $('#simMismatchModal')) closeSimMismatchPopup(); });
+  $('#matchPopupCloseBtn')?.addEventListener('click', closeMatchPopup);
+  $('#matchPopupViewAllBtn')?.addEventListener('click', () => { closeMatchPopup(); navigate('notifications'); });
+  $('#matchPopupModal')?.addEventListener('click', (e) => { if (e.target === $('#matchPopupModal')) closeMatchPopup(); });
   $('#homeNotifBtn')?.addEventListener('click', () => navigate('notifications'));
 
   setupOtpDigitInputs();
@@ -1898,6 +2290,58 @@ function bindEvents() {
   document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeReportSheet(); });
 }
 
+window.handleOAuthHash = async function(hashStr) {
+  if (!hashStr || !hashStr.includes('access_token=')) return;
+  try {
+    const cleanHash = hashStr.startsWith('#') ? hashStr.substring(1) : hashStr;
+    const hashParams = new URLSearchParams(cleanHash);
+    const accessToken = hashParams.get('access_token');
+    const oauthState = hashParams.get('state');
+
+    // If Google OAuth was initiated from inside the Android APK via Chrome, bounce back into the APK!
+    if (oauthState === 'native_apk' && !isNativeAvailable()) {
+      const deepLinkUrl = `lostlink://auth#${cleanHash}`;
+      const authCard = $('#authPrimaryView');
+      if (authCard) {
+        authCard.innerHTML = `
+          <div style="text-align:center; padding:24px 12px;">
+            <div style="font-size:38px; margin-bottom:10px;">📲</div>
+            <h3 style="color:#F8FAFC; margin:0 0 8px;">Returning to LostLink AI App...</h3>
+            <p style="color:#94A3B8; font-size:13px; margin:0 0 18px;">Google verification complete! Tap below if the LostLink app does not open automatically.</p>
+            <a href="${deepLinkUrl}" style="display:inline-block; background:#2563EB; color:#FFF; padding:12px 22px; border-radius:12px; font-weight:800; text-decoration:none; font-size:14px;">Open LostLink AI App →</a>
+          </div>`;
+      }
+      window.location.replace(deepLinkUrl);
+      return;
+    }
+
+    if (accessToken) {
+      if (window.location.hash) {
+        try { window.history.replaceState(null, '', window.location.pathname); } catch {}
+      }
+      setAuthLoading(true, 'Verifying @rvu.edu.in account...');
+      const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const profile = await res.json();
+      if (profile && profile.email && RVU_EMAIL_RE.test(profile.email)) {
+        window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
+          ok: true,
+          name: profile.name || profile.email.split('@')[0],
+          email: profile.email.toLowerCase(),
+          photoUrl: profile.picture || ''
+        });
+      } else {
+        setAuthLoading(false);
+        toast('Access restricted: Please select an official @rvu.edu.in Google account', 'error');
+      }
+    }
+  } catch (e) {
+    setAuthLoading(false);
+    console.error('OAuth redirect token error:', e);
+  }
+};
+
 // ============================================================
 // 25. INIT
 // ============================================================
@@ -1907,39 +2351,28 @@ async function init() {
     try {
       const keys = await caches.keys();
       for (const k of keys) {
-        if (k !== 'lostlink-v5-network-first') await caches.delete(k);
+        if (k !== 'lostlink-v7-network-first') await caches.delete(k);
       }
     } catch (e) {}
   }
 
-  // Handle Google OAuth 2.0 Web redirect tokens (if redirected back)
+  // Handle Google OAuth 2.0 Web/APK redirect tokens
   if (window.location.hash && window.location.hash.includes('access_token=')) {
-    try {
-      const hashParams = new URLSearchParams(window.location.hash.substring(1));
-      const accessToken = hashParams.get('access_token');
-      if (accessToken) {
-        window.history.replaceState(null, '', window.location.pathname);
-        setAuthLoading(true, 'Verifying @rvu.edu.in account...');
-        const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-          headers: { Authorization: `Bearer ${accessToken}` }
-        });
-        const profile = await res.json();
-        if (profile && profile.email && RVU_EMAIL_RE.test(profile.email)) {
-          window.onNativeGoogleSignIn && window.onNativeGoogleSignIn({
-            ok: true,
-            name: profile.name || profile.email.split('@')[0],
-            email: profile.email.toLowerCase(),
-            photoUrl: profile.picture || ''
-          });
-        } else {
-          setAuthLoading(false);
-          toast('Access restricted: Please select an official @rvu.edu.in Google account', 'error');
-        }
-      }
-    } catch (e) {
-      console.error('OAuth redirect token error:', e);
-    }
+    await window.handleOAuthHash(window.location.hash);
   }
+
+  window.addEventListener('hashchange', () => {
+    if (window.location.hash && window.location.hash.includes('access_token=')) {
+      window.handleOAuthHash(window.location.hash);
+    }
+  });
+
+  window.addEventListener('online', () => {
+    if (state.user) {
+      updateSyncStatus('Syncing...');
+      syncReports().then(() => refreshAll());
+    }
+  });
 
   state.user = loadUser();
   state.reports = localGetReports();
@@ -1962,7 +2395,7 @@ document.addEventListener('DOMContentLoaded', init);
 // ============================================================
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=5.0').catch(() => {});
+    navigator.serviceWorker.register('./sw.js?v=7.0').catch(() => {});
   });
 }
 
