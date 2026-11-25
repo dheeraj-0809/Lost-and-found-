@@ -106,4 +106,19 @@ public final class WebAppBridge {
     public void verifyDeviceSimPhone(String phone) {
         activity.runOnUiThread(() -> activity.verifyDeviceSimPhone(phone));
     }
+
+    @JavascriptInterface
+    public int getAppVersionCode() {
+        return activity.getAppVersionCode();
+    }
+
+    @JavascriptInterface
+    public String getAppVersionName() {
+        return activity.getAppVersionName();
+    }
+
+    @JavascriptInterface
+    public void downloadAndInstallUpdate(String apkUrl) {
+        activity.runOnUiThread(() -> activity.downloadAndInstallUpdate(apkUrl));
+    }
 }

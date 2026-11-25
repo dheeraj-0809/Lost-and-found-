@@ -2300,6 +2300,132 @@ function bindEvents() {
 
   // ESC closes sheet
   document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeReportSheet(); });
+
+  // Direct In-App Update checker
+  $('#checkUpdatesBtn')?.addEventListener('click', () => checkAppUpdates(true));
+  $('#appUpdateLaterBtn')?.addEventListener('click', closeAppUpdateModal);
+  $('#appUpdateModal')?.addEventListener('click', (e) => { if (e.target === $('#appUpdateModal')) closeAppUpdateModal(); });
+}
+
+const CLIENT_VERSION_CODE = 11;
+const CLIENT_VERSION_NAME = '1.1.9';
+const VERSION_CHECK_URL   = 'https://dheeraj-0809.github.io/Lost-and-found-/version.json';
+
+let _pendingUpdateInfo = null;
+
+function closeAppUpdateModal() {
+  const modal = $('#appUpdateModal');
+  if (modal) {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+}
+
+function showAppUpdateModal(remote) {
+  _pendingUpdateInfo = remote;
+  const modal = $('#appUpdateModal');
+  if (!modal) return;
+  const titleEl = $('#appUpdateTitle');
+  const notesEl = $('#appUpdateNotes');
+  const progWrap = $('#appUpdateProgressWrap');
+  const nowBtn = $('#appUpdateNowBtn');
+
+  if (titleEl) titleEl.textContent = `Update Ready (v${remote.versionName})`;
+  if (notesEl) notesEl.textContent = remote.notes || 'A newer version of LostLink AI is ready to install directly.';
+  if (progWrap) progWrap.classList.add('hidden');
+  if (nowBtn) {
+    nowBtn.disabled = false;
+    nowBtn.textContent = isNativeAvailable() ? 'Update Now (In-App)' : 'Refresh to Update';
+    nowBtn.onclick = startAppUpdate;
+  }
+
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+}
+
+async function startAppUpdate() {
+  if (!_pendingUpdateInfo) return;
+  const nowBtn = $('#appUpdateNowBtn');
+  const progWrap = $('#appUpdateProgressWrap');
+  const progBar = $('#appUpdateProgressBar');
+  const progText = $('#appUpdateProgressText');
+
+  if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.downloadAndInstallUpdate) {
+    if (nowBtn) { nowBtn.disabled = true; nowBtn.textContent = 'Updating...'; }
+    if (progWrap) progWrap.classList.remove('hidden');
+    if (progBar) progBar.style.width = '5%';
+    if (progText) progText.textContent = 'Downloading update... 0%';
+
+    window.onAppUpdateProgress = (pct) => {
+      if (progBar) progBar.style.width = `${pct}%`;
+      if (progText) progText.textContent = `Downloading update... ${pct}%`;
+    };
+
+    window.onAppUpdateComplete = (ok, errMsg) => {
+      if (ok) {
+        if (progText) progText.textContent = 'Opening Android installer... Tap Update!';
+        setTimeout(closeAppUpdateModal, 1500);
+      } else {
+        if (nowBtn) { nowBtn.disabled = false; nowBtn.textContent = 'Update Now (In-App)'; }
+        if (errMsg === 'PERMISSION_NEEDED') {
+          toast("Enable 'Allow from this source' in Settings, then tap Update Now again.", 'info');
+          if (progText) progText.textContent = 'Permission needed: Allow install from LostLink AI, then tap Update Now.';
+        } else {
+          toast(errMsg || 'Could not download update. Try again.', 'error');
+          if (progWrap) progWrap.classList.add('hidden');
+        }
+      }
+    };
+
+    const apkUrl = _pendingUpdateInfo.apkUrl || 'https://dheeraj-0809.github.io/Lost-and-found-/LostLink-AI.apk';
+    window.LostLinkNative.downloadAndInstallUpdate(apkUrl);
+  } else {
+    // iPhone Safari / PWA: clear old caches and reload straight from GitHub Pages
+    if (nowBtn) { nowBtn.disabled = true; nowBtn.textContent = 'Refreshing...'; }
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.update().catch(() => {})));
+      }
+    } catch {}
+    window.location.reload();
+  }
+}
+
+async function checkAppUpdates(manual = false) {
+  const lbl = $('#appVersionLabel');
+  let localCode = CLIENT_VERSION_CODE;
+  let localName = CLIENT_VERSION_NAME;
+  if (isNativeAvailable() && window.LostLinkNative && window.LostLinkNative.getAppVersionCode) {
+    try {
+      localCode = Number(window.LostLinkNative.getAppVersionCode()) || CLIENT_VERSION_CODE;
+      localName = (window.LostLinkNative.getAppVersionName && window.LostLinkNative.getAppVersionName()) || CLIENT_VERSION_NAME;
+    } catch {}
+  }
+  if (lbl) lbl.textContent = `v${localName}`;
+
+  if (manual) toast('Checking for updates...', 'info');
+  try {
+    const res = await fetchWithTimeout(`${VERSION_CHECK_URL}?t=${Date.now()}`, { method: 'GET', cache: 'no-store' }, 10000);
+    if (!res.ok) {
+      if (manual) toast(`You are on v${localName}`, 'info');
+      return;
+    }
+    const remote = await res.json();
+    if (remote && Number(remote.versionCode) > localCode) {
+      showAppUpdateModal(remote);
+    } else if (manual) {
+      toast(`LostLink AI is up to date (v${localName}) ✔`, 'success');
+    }
+  } catch {
+    if (manual) toast('Could not check updates offline.', 'info');
+  }
 }
 
 window.handleOAuthHash = async function(hashStr) {
@@ -2363,7 +2489,7 @@ async function init() {
     try {
       const keys = await caches.keys();
       for (const k of keys) {
-        if (k !== 'lostlink-v8-network-first') await caches.delete(k);
+        if (k !== 'lostlink-v9-network-first') await caches.delete(k);
       }
     } catch (e) {}
   }
@@ -2375,6 +2501,9 @@ async function init() {
   bindEvents();
   $('#eventDate').value = localDate();
   renderAuthState();
+
+  // Set version badge & check quietly for direct updates
+  setTimeout(() => checkAppUpdates(false), 3000);
 
   // Handle Google OAuth 2.0 Web/APK redirect tokens AFTER UI & events are bound
   if (window.location.hash && window.location.hash.includes('access_token=')) {
@@ -2407,7 +2536,7 @@ document.addEventListener('DOMContentLoaded', init);
 // ============================================================
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=8.0').catch(() => {});
+    navigator.serviceWorker.register('./sw.js?v=9.0').catch(() => {});
   });
 }
 

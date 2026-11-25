@@ -5,12 +5,14 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.telephony.SmsManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
@@ -25,8 +27,14 @@ import android.webkit.WebViewClient;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
+import androidx.core.content.FileProvider;
+
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -834,6 +842,120 @@ public final class MainActivity extends Activity {
                 }
             } catch (Exception e) {
                 evaluateJs("window.onNativePhotoSelected(" + JSONObject.quote(uri.toString()) + ")");
+            }
+        }).start();
+    }
+
+    public int getAppVersionCode() {
+        try {
+            PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                return (int) pInfo.getLongVersionCode();
+            }
+            return pInfo.versionCode;
+        } catch (Exception e) {
+            return 1;
+        }
+    }
+
+    public String getAppVersionName() {
+        try {
+            PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return pInfo.versionName != null ? pInfo.versionName : "1.1.9";
+        } catch (Exception e) {
+            return "1.1.9";
+        }
+    }
+
+    public void downloadAndInstallUpdate(final String rawApkUrl) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getPackageManager().canRequestPackageInstalls()) {
+            evaluateJs("window.onAppUpdateComplete && window.onAppUpdateComplete(false, 'PERMISSION_NEEDED')");
+            try {
+                Intent permIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName()));
+                permIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(permIntent);
+            } catch (Exception e) {
+                Toast.makeText(this, "Enable 'Install unknown apps' for LostLink AI in Settings.", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                String currentUrl = rawApkUrl + (rawApkUrl.contains("?") ? "&" : "?") + "t=" + System.currentTimeMillis();
+                for (int hops = 0; hops < 5; hops++) {
+                    URL url = new URL(currentUrl);
+                    conn = (HttpURLConnection) url.openConnection();
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(30000);
+                    conn.setInstanceFollowRedirects(true);
+                    int code = conn.getResponseCode();
+                    if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP
+                            || code == 303 || code == 307 || code == 308) {
+                        String next = conn.getHeaderField("Location");
+                        conn.disconnect();
+                        if (next == null) break;
+                        currentUrl = next;
+                    } else {
+                        break;
+                    }
+                }
+
+                if (conn == null || conn.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                    evaluateJs("window.onAppUpdateComplete && window.onAppUpdateComplete(false, 'Download failed. Check internet connection.')");
+                    return;
+                }
+
+                int totalLen = conn.getContentLength();
+                File outFile = new File(getCacheDir(), "LostLink-AI-update.apk");
+                if (outFile.exists()) outFile.delete();
+
+                try (InputStream in = conn.getInputStream();
+                     FileOutputStream out = new FileOutputStream(outFile)) {
+                    byte[] buf = new byte[16384];
+                    int read;
+                    long downloaded = 0;
+                    int lastPct = -1;
+                    while ((read = in.read(buf)) != -1) {
+                        out.write(buf, 0, read);
+                        downloaded += read;
+                        if (totalLen > 0) {
+                            int pct = (int) Math.min(99, (downloaded * 100L) / totalLen);
+                            if (pct != lastPct && (pct % 5 == 0 || pct == 99)) {
+                                lastPct = pct;
+                                evaluateJs("window.onAppUpdateProgress && window.onAppUpdateProgress(" + pct + ")");
+                            }
+                        }
+                    }
+                    out.flush();
+                }
+
+                if (!outFile.exists() || outFile.length() < 100000) {
+                    evaluateJs("window.onAppUpdateComplete && window.onAppUpdateComplete(false, 'Downloaded update file is incomplete.')");
+                    return;
+                }
+
+                evaluateJs("window.onAppUpdateProgress && window.onAppUpdateProgress(100)");
+                evaluateJs("window.onAppUpdateComplete && window.onAppUpdateComplete(true, '')");
+
+                runOnUiThread(() -> {
+                    try {
+                        Uri apkUri = FileProvider.getUriForFile(MainActivity.this,
+                                getPackageName() + ".fileprovider", outFile);
+                        Intent installIntent = new Intent(Intent.ACTION_VIEW);
+                        installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                        installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(installIntent);
+                    } catch (Exception e) {
+                        Toast.makeText(MainActivity.this, "Installer error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                });
+            } catch (Exception e) {
+                evaluateJs("window.onAppUpdateComplete && window.onAppUpdateComplete(false, " + JSONObject.quote(e.getMessage() != null ? e.getMessage() : "Update failed") + ")");
+            } finally {
+                if (conn != null) conn.disconnect();
             }
         }).start();
     }
