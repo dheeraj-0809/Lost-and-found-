@@ -1393,7 +1393,6 @@ function closeOtpModal() {
 
 function startOtpCountdownTimer(seconds) {
   if (state.otp.timer) clearInterval(state.otp.timer);
-  let remaining = seconds;
   const timerText = $('#otpTimerText');
   const resendBtn = $('#otpResendBtn');
   const secondsLeft = $('#otpSecondsLeft');
@@ -1407,13 +1406,14 @@ function startOtpCountdownTimer(seconds) {
   if (countdownDisplay) countdownDisplay.classList.remove('hidden');
   if (expiryNotice) expiryNotice.classList.add('hidden');
 
-  state.otp.timer = setInterval(() => {
-    remaining--;
+  const tick = () => {
+    const remaining = Math.max(0, Math.ceil((state.otp.expiresAt - Date.now()) / 1000));
     if (secondsLeft) secondsLeft.textContent = remaining;
     if (timerText) timerText.textContent = `Resend code in 0:${remaining < 10 ? '0' : ''}${remaining}`;
 
     if (remaining <= 0) {
       clearInterval(state.otp.timer);
+      state.otp.timer = null;
       state.otp.code = null; // Expire the code
       if (codeDisplay) codeDisplay.textContent = '------';
       if (countdownDisplay) countdownDisplay.classList.add('hidden');
@@ -1423,7 +1423,10 @@ function startOtpCountdownTimer(seconds) {
       if (resendBtn) resendBtn.classList.remove('hidden');
       toast('Verification code expired. Please tap Resend Code.', 'info');
     }
-  }, 1000);
+  };
+
+  tick();
+  state.otp.timer = setInterval(tick, 250);
 }
 
 async function verifyEnteredOtp() {
@@ -1468,11 +1471,20 @@ function setupOtpDigitInputs() {
   digits.forEach((inp, idx) => {
     inp.addEventListener('input', () => {
       const val = inp.value.replace(/\D/g, '');
-      inp.value = val ? val[0] : '';
-      if (val && idx < digits.length - 1) {
-        digits[idx + 1].focus();
+      if (val.length > 1) {
+        // Handle iOS Safari QuickType / multi-digit paste directly into box
+        val.split('').forEach((ch, offset) => {
+          if (idx + offset < digits.length) digits[idx + offset].value = ch;
+        });
+        const nextIdx = Math.min(idx + val.length, digits.length - 1);
+        digits[nextIdx].focus();
+      } else {
+        inp.value = val ? val[0] : '';
+        if (val && idx < digits.length - 1) {
+          digits[idx + 1].focus();
+        }
       }
-      // If last digit filled, auto-verify
+      // If all 6 digits filled, auto-verify
       const full = digits.map(d => d.value.trim()).join('');
       if (full.length === 6) {
         verifyEnteredOtp();
@@ -2351,12 +2363,20 @@ async function init() {
     try {
       const keys = await caches.keys();
       for (const k of keys) {
-        if (k !== 'lostlink-v7-network-first') await caches.delete(k);
+        if (k !== 'lostlink-v8-network-first') await caches.delete(k);
       }
     } catch (e) {}
   }
 
-  // Handle Google OAuth 2.0 Web/APK redirect tokens
+  state.user = loadUser();
+  state.reports = localGetReports();
+  state.matches = computeMatches(state.reports);
+  populateLocationDropdown();
+  bindEvents();
+  $('#eventDate').value = localDate();
+  renderAuthState();
+
+  // Handle Google OAuth 2.0 Web/APK redirect tokens AFTER UI & events are bound
   if (window.location.hash && window.location.hash.includes('access_token=')) {
     await window.handleOAuthHash(window.location.hash);
   }
@@ -2374,14 +2394,6 @@ async function init() {
     }
   });
 
-  state.user = loadUser();
-  state.reports = localGetReports();
-  state.matches = computeMatches(state.reports);
-  populateLocationDropdown();
-  bindEvents();
-  $('#eventDate').value = localDate();
-  renderAuthState();
-
   if (state.user) {
     refreshAll();
     startSync();
@@ -2395,7 +2407,7 @@ document.addEventListener('DOMContentLoaded', init);
 // ============================================================
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js?v=7.0').catch(() => {});
+    navigator.serviceWorker.register('./sw.js?v=8.0').catch(() => {});
   });
 }
 
